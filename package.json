@@ -1,0 +1,9 @@
+{
+  "name": "nargizka-shop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Nargizka Shop — интернет-магазин женских платьев с админ-панелью",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

@@ -1,0 +1,17 @@
+node_modules/
+uploads/*
+!uploads/.gitkeep
+data/auth.json
+data/notify.json
+data/*.broken-*.json
+.env
+.env.*
+!.env.example
+docs/admin-report/_clips/
+docs/admin-report/_lesson/
+**/_e_*/
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
