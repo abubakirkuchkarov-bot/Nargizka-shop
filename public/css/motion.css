@@ -1,0 +1,50 @@
+/* Nargizka Shop - motion layer (GSAP). Pure ASCII. */
+
+/* ---------- intro ---------- */
+.preloader { position: fixed; inset: 0; z-index: 1000; background: #0b0a0a; color: #f1e6c8; display: grid; place-items: center; animation: nsHide .6s 6s forwards; }
+.no-intro .preloader { display: none; }
+.preloader__inner { display: grid; justify-items: center; gap: 14px; }
+.preloader__logo { width: 112px; height: 112px; margin-bottom: 10px; }
+.preloader__word { font-family: var(--serif); font-weight: 300; font-size: clamp(40px, 6vw, 76px); line-height: 1.05; letter-spacing: .32em; padding-left: .32em; overflow: hidden; }
+.preloader__word span { display: inline-block; }
+.preloader__sub { font-size: 11px; letter-spacing: .55em; padding-left: .55em; text-transform: uppercase; color: var(--gold-2); }
+.preloader__line { width: 220px; height: 1px; margin-top: 22px; background: rgba(233, 209, 143, .18); }
+.preloader__line i { display: block; width: 100%; height: 100%; background: var(--gold-2); transform: scaleX(0); transform-origin: left; }
+.preloader__count { position: absolute; right: clamp(20px, 4vw, 48px); bottom: 20px; font-family: var(--serif); font-weight: 300; font-size: clamp(64px, 10vw, 150px); line-height: 1; color: rgba(241, 230, 200, .13); font-variant-numeric: tabular-nums; }
+@keyframes nsHide { to { opacity: 0; visibility: hidden; } }
+
+/* hero waits for GSAP; if the library never arrives it shows itself */
+.motion .hero__copy > *, .motion .hero__frame { visibility: hidden; animation: nsShow 0s 3.6s forwards; }
+.no-intro.motion .hero__copy > *, .no-intro.motion .hero__frame { animation-delay: 2.4s; }
+.gsap-on .hero__copy > *, .gsap-on .hero__frame { animation: none; }
+@keyframes nsShow { to { visibility: visible; } }
+.gsap-on .card.fade-in { animation: none; }
+
+/* ---------- split text ---------- */
+.ln-mask { padding-bottom: .06em; margin-bottom: -.06em; }
+
+/* ---------- route progress ---------- */
+.route-line { position: fixed; left: 0; right: 0; top: 0; z-index: 200; height: 2px; background: linear-gradient(90deg, #e9d18f, #b8913f); transform: scaleX(0); transform-origin: left; pointer-events: none; }
+
+/* ---------- cursor ---------- */
+.cursor { position: fixed; left: 0; top: 0; z-index: 999; width: 0; height: 0; pointer-events: none; transition: opacity .3s; }
+.cursor.is-hidden { opacity: 0; }
+.cursor__ring { position: absolute; width: 36px; height: 36px; margin: -18px 0 0 -18px; border: 1px solid rgba(184, 145, 63, .75); border-radius: 50%; display: grid; place-items: center; transition: width .5s var(--ease-lux), height .5s var(--ease-lux), margin .5s var(--ease-lux), background .4s, border-color .4s; }
+.cursor__label { font-size: 10px; letter-spacing: .2em; text-transform: uppercase; color: #fff; opacity: 0; transition: opacity .25s; white-space: nowrap; padding-left: .2em; }
+.cursor.is-link .cursor__ring { width: 56px; height: 56px; margin: -28px 0 0 -28px; background: rgba(184, 145, 63, .1); }
+.cursor.is-media .cursor__ring { width: 98px; height: 98px; margin: -49px 0 0 -49px; background: rgba(17, 17, 17, .82); border-color: rgba(233, 209, 143, .5); }
+.cursor.is-media .cursor__label { opacity: 1; }
+.cursor.is-down .cursor__ring { width: 28px; height: 28px; margin: -14px 0 0 -14px; }
+.has-cursor [data-cursor] { cursor: none; }
+
+/* ---------- fly to cart ---------- */
+.fly { position: fixed; z-index: 300; pointer-events: none; object-fit: cover; border-radius: 4px; box-shadow: 0 20px 50px rgba(0, 0, 0, .3); }
+
+/* ---------- pinned collections (desktop) ---------- */
+@media (min-width: 901px) {
+  .gsap-on .collections { padding-top: 64px; }
+  .gsap-on .collections .section__head { margin-bottom: 32px; }
+  .gsap-on .collections__viewport { overflow: hidden; padding-bottom: 56px; }
+  .gsap-on .coll { width: clamp(220px, min(24vw, 36vh), 360px); }
+  .gsap-on .coll:nth-child(even) { margin-top: 48px; }
+}

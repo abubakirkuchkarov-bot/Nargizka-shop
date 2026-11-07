@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Nargizka Shop — Панель управления</title>
+  <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/css/admin.css">
+</head>
+<body class="admin-body">
+  <section class="login" id="login">
+    <form class="login__box" id="loginForm">
+      <img src="/assets/logo.svg" alt="Nargizka Shop" class="login__logo">
+      <h1 data-i18n="admin.login">Панель управления</h1>
+      <p class="muted" data-i18n="admin.loginHint">Nargizka Shop · вход для администратора</p>
+      <input class="input" type="password" name="password" placeholder="Пароль" data-i18n-ph="admin.password" autocomplete="current-password" required>
+      <button class="lang-switch" id="langBtnLogin" type="button" aria-label="Language / Til" style="justify-self:center;margin:4px auto 8px"></button>
+      <button class="btn btn--dark btn--block" type="submit"><span data-i18n="admin.enter">Войти</span></button>
+      <p class="login__hint" data-i18n="admin.onlyStaff">Доступ только для сотрудников магазина.</p>
+    </form>
+  </section>
+
+  <div class="admin" id="admin" hidden>
+    <aside class="side" id="side">
+      <a href="/" class="side__brand" target="_blank" rel="noopener">
+        <img src="/assets/logo.svg" alt="">
+        <span>NARGIZKA<small>ADMIN</small></span>
+      </a>
+      <nav class="side__nav" id="sideNav">
+        <button data-view="dashboard"><svg viewBox="0 0 24 24"><path d="M4 13h6V4H4zM14 20h6V11h-6zM4 20h6v-3H4zM14 7h6V4h-6z"/></svg><span data-i18n="admin.dashboard">Обзор</span></button>
+        <button data-view="products"><svg viewBox="0 0 24 24"><path d="M12 7a2 2 0 1 1 2-2c0 1.2-2 1.6-2 3v1l9 6.5a1 1 0 0 1-.6 1.8H3.6a1 1 0 0 1-.6-1.8L12 9"/></svg><span data-i18n="admin.products">Товары</span></button>
+        <button data-view="orders"><svg viewBox="0 0 24 24"><path d="M5 8h14l-1.2 12H6.2z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg><span data-i18n="admin.orders">Заказы</span><span class="side__badge" id="newOrders"></span></button>
+        <button data-view="finance"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16M8 15v4M12 11v8M16 7v12"/></svg><span data-i18n="admin.finance">Финансы</span></button>
+        <button data-view="marketing"><svg viewBox="0 0 24 24"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1zM15 9a3 3 0 0 1 0 6M18 6a7 7 0 0 1 0 12"/></svg><span data-i18n="admin.marketing">Скидки и акции</span></button>
+        <button data-view="promos"><svg viewBox="0 0 24 24"><path d="M3 8a2 2 0 0 0 2-2h14a2 2 0 0 0 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 0-2 2H5a2 2 0 0 0-2-2v-2a2 2 0 0 0 0-4z"/><path d="M10 9l4 6M10 15h.01M14 9h.01"/></svg><span data-i18n="admin.promos">Промокоды</span></button>
+        <button data-view="catalog"><svg viewBox="0 0 24 24"><path d="M4 5h7v7H4zM13 5h7v7h-7zM4 14h7v5H4zM13 14h7v5h-7z"/></svg><span data-i18n="admin.catalog">Категории, цвета, размеры</span></button>
+        <button data-view="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span data-i18n="admin.settings">Настройки</span></button>
+      </nav>
+      <div class="side__foot">
+        <a href="/" target="_blank" rel="noopener" class="btn btn--gold btn--block"><span data-i18n="admin.openSite">Открыть сайт ↗</span></a>
+        <button class="link-btn" id="logoutBtn"><span data-i18n="admin.logout">Выйти</span></button>
+      </div>
+    </aside>
+
+    <div class="main">
+      <div class="warn-bar" id="warnBar" hidden></div>
+      <header class="topbar">
+        <button class="icon-btn side-toggle" id="sideToggle" aria-label="Меню" data-i18n-aria="admin.menu"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+        <h1 id="viewTitle"></h1>
+        <button class="lang-switch" id="langBtn" type="button" aria-label="Language / Til"></button>
+        <div class="topbar__right" id="topbarActions"></div>
+      </header>
+      <div class="view" id="view"></div>
+    </div>
+  </div>
+
+  <div class="modal" id="modal" role="dialog" aria-modal="true">
+    <div class="modal__box modal__box--wide">
+      <button class="icon-btn modal__close" data-close aria-label="Закрыть" data-i18n-aria="admin.close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      <div id="modalContent"></div>
+    </div>
+  </div>
+  <div class="overlay" id="overlay"></div>
+  <div class="toasts" id="toasts"></div>
+
+  <script src="/js/store.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/admin/admin.js"></script>
+</body>
+</html>

@@ -1,6 +1,5 @@
 {
   "version": 2,
-  "buildCommand": "node scripts/vercel-copy-static.js",
   "functions": {
     "api/index.js": {
       "includeFiles": "{data/**,js/store.js,notify.js,server.js,storage.js}",

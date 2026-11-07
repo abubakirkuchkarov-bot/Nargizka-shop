@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nargizka Shop — женские платья премиум-класса</title>
+  <meta name="description" content="Nargizka Shop — бутик женских платьев: вечерние, коктейльные, свадебные и повседневные модели. Скидки, доставка, примерка.">
+  <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/motion.css">
+  <script>
+    (function () {
+      var d = document.documentElement, reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      d.classList.add(reduced ? 'reduced' : 'motion');
+      try {
+        if (reduced || sessionStorage.getItem('ns_intro')) d.classList.add('no-intro');
+        else sessionStorage.setItem('ns_intro', '1');
+      } catch (e) { d.classList.add('no-intro'); }
+    })();
+  </script>
+</head>
+<body>
+  <div class="preloader" id="preloader" aria-hidden="true">
+    <div class="preloader__inner">
+      <img src="assets/logo.svg" alt="" class="preloader__logo">
+      <div class="preloader__word">NARGIZKA</div>
+      <div class="preloader__sub">Maison de Robes</div>
+      <div class="preloader__line"><i></i></div>
+    </div>
+    <div class="preloader__count">0</div>
+  </div>
+
+  <div class="announce" id="announce"></div>
+
+  <header class="header" id="header">
+    <div class="container header__inner">
+      <div class="header__left">
+        <button class="icon-btn burger" id="burgerBtn" aria-label="Меню" data-i18n-aria="nav.menu">
+          <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+        </button>
+        <nav class="nav">
+          <a href="#/catalog?sort=new" data-nav="new"><span data-i18n="nav.new">Новинки</span></a>
+          <div class="nav__drop">
+            <a href="#/catalog" data-nav="catalog"><span data-i18n="nav.dresses">Платья</span></a>
+            <div class="mega" id="mega"></div>
+          </div>
+          <a href="#/catalog?sale=1" class="nav__sale" data-nav="sale"><span data-i18n="nav.sale">Распродажа</span></a>
+          <a href="#/catalog?cat=wedding" data-nav="wedding">Bridal</a>
+        </nav>
+      </div>
+
+      <a href="#/" class="brand" aria-label="Nargizka Shop" data-i18n-aria="nav.home">
+        <img src="assets/logo.svg" alt="" class="brand__logo">
+        <span class="brand__word">NARGIZKA<small>SHOP</small></span>
+      </a>
+
+      <div class="header__actions">
+        <button class="lang-switch" id="langBtn" type="button" aria-label="Language / Til"></button>
+        <button class="cur-switch" id="curBtn" type="button" aria-label="Валюта цен" data-i18n-aria="currency.label"></button>
+        <button class="icon-btn" id="searchBtn" aria-label="Поиск" data-i18n-aria="nav.search">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+        </button>
+        <a class="icon-btn" href="#/wishlist" aria-label="Избранное" data-i18n-aria="nav.wish">
+          <svg viewBox="0 0 24 24"><path d="M12 20s-7-4.4-9-9.2C1.7 7.3 4 4 7.4 4c2 0 3.4 1.1 4.6 2.6C13.2 5.1 14.6 4 16.6 4 20 4 22.3 7.3 21 10.8 19 15.6 12 20 12 20z"/></svg>
+          <span class="count" id="wishCount"></span>
+        </a>
+        <button class="icon-btn" id="cartBtn" aria-label="Корзина" data-i18n-aria="nav.cart">
+          <svg viewBox="0 0 24 24"><path d="M5 8h14l-1.2 12H6.2z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>
+          <span class="count" id="cartCount"></span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="search" id="search">
+    <div class="container">
+      <div class="search__bar">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+        <input type="search" id="searchInput" placeholder="Найти платье: «шёлк», «вечернее», «Аврора»…" autocomplete="off">
+        <button class="link-btn" id="searchClose"><span data-i18n="nav.close">Закрыть</span></button>
+      </div>
+      <div class="search__results" id="searchResults"></div>
+    </div>
+  </div>
+
+  <main id="app"></main>
+  
+
+  <footer class="footer">
+    <div class="container footer__grid">
+      <div>
+        <a href="#/" class="brand brand--footer">
+          <img src="assets/logo.svg" alt="" class="brand__logo">
+          <span class="brand__word">NARGIZKA<small>SHOP</small></span>
+        </a>
+        <p class="footer__text" data-i18n="footer.about">Бутик женских платьев. Каждая модель проходит ручной контроль качества перед отправкой.</p>
+      </div>
+      <div>
+        <h4 data-i18n="footer.catalog">Каталог</h4>
+        <div id="footerCats"></div>
+      </div>
+      <div>
+        <h4 data-i18n="footer.buyers">Покупателям</h4>
+        <a href="#/catalog?sale=1"><span data-i18n="nav.sale">Распродажа</span></a>
+        <a href="#/wishlist"><span data-i18n="nav.wish">Избранное</span></a>
+        <a href="#" data-modal="sizes"><span data-i18n="footer.sizes">Таблица размеров</span></a>
+        <a href="#" data-modal="delivery"><span data-i18n="footer.delivery">Доставка и возврат</span></a>
+      </div>
+      <div>
+        <h4 data-i18n="footer.contacts">Контакты</h4>
+        <div id="footerContacts"></div>
+      </div>
+    </div>
+    <div class="container footer__bottom">
+      <span>© <span id="year"></span> Nargizka Shop. <span data-i18n="footer.rights">Все права защищены.</span></span>
+      <span data-i18n="footer.pay">оплата Click, Payme, Uzcard, Humo</span>
+    </div>
+  </footer>
+
+  <div class="overlay" id="overlay"></div>
+
+  <aside class="drawer" id="cartDrawer" aria-label="Корзина">
+    <div class="drawer__head">
+      <h3><span data-i18n="cart.title">Корзина</span></h3>
+      <button class="icon-btn" data-close aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="drawer__body" id="cartBody"></div>
+    <div class="drawer__foot" id="cartFoot"></div>
+  </aside>
+
+  <aside class="drawer drawer--left" id="mobileMenu" aria-label="Меню">
+    <div class="drawer__head">
+      <h3><span data-i18n="nav.menu">Меню</span></h3>
+      <button class="icon-btn" data-close aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="drawer__body mobile-nav" id="mobileNav"></div>
+  </aside>
+
+  <div class="modal" id="modal" role="dialog" aria-modal="true">
+    <div class="modal__box">
+      <button class="icon-btn modal__close" data-close aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      <div id="modalContent"></div>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+
+  <script src="js/store.js"></script>
+  <script src="js/i18n.js"></script>
+  <script src="js/app.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/ScrollTrigger.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/SplitText.min.js"></script>
+  <script src="https://unpkg.com/lenis@1.1.18/dist/lenis.min.js"></script>
+  <script src="js/motion.js"></script>
+</body>
+</html>

@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" fill="none" aria-hidden="true">
+  <!-- Hand-drawn vine frame: irregular, denser at corners, uneven side branches -->
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#e9d18f"/>
+      <stop offset="55%" stop-color="#b8913f"/>
+      <stop offset="100%" stop-color="#8a6a2a"/>
+    </linearGradient>
+  </defs>
+  <g stroke="url(#g)" stroke-linecap="round" stroke-linejoin="round" opacity=".92">
+    <!-- TOP-LEFT corner: thick curling vine -->
+    <path d="M18 210 C22 140 28 88 52 52 C88 18 148 22 210 16" stroke-width="2.4"/>
+    <path d="M34 168 C48 120 78 78 122 54" stroke-width="1.5" opacity=".75"/>
+    <path d="M58 58 C78 42 108 36 148 28" stroke-width="1.3" opacity=".7"/>
+    <path d="M52 52 C40 68 48 92 62 98 C78 104 86 86 74 74" stroke-width="1.4"/>
+    <path d="M92 34 C104 22 128 18 146 32 C156 42 148 56 132 52" stroke-width="1.35"/>
+    <path d="M28 120 C18 112 12 128 24 136 C36 142 44 124 32 118" stroke-width="1.2"/>
+    <path d="M150 22 C162 12 178 20 172 34" stroke-width="1.1"/>
+    <circle cx="62" cy="98" r="2.2" fill="#c9a24e" stroke="none"/>
+    <circle cx="132" cy="52" r="1.8" fill="#d8b45f" stroke="none"/>
+
+    <!-- TOP edge: sparse uneven twigs -->
+    <path d="M320 12 C360 22 390 8 430 18 C450 24 448 8 470 14" stroke-width="1.35"/>
+    <path d="M560 10 C600 4 640 20 690 8 C720 2 740 16 760 10" stroke-width="1.5"/>
+    <path d="M880 14 C920 6 960 22 1000 10 C1030 4 1048 18 1070 12" stroke-width="1.25"/>
+    <path d="M430 18 C438 6 456 8 454 22" stroke-width="1.05"/>
+    <path d="M690 8 C702 -2 718 6 712 20" stroke-width="1.1"/>
+    <path d="M1000 10 C1012 0 1026 10 1018 22" stroke-width="1"/>
+
+    <!-- TOP-RIGHT corner -->
+    <path d="M1230 14 C1295 18 1360 16 1390 52 C1418 90 1422 150 1424 210" stroke-width="2.3"/>
+    <path d="M1288 28 C1330 34 1368 58 1388 98" stroke-width="1.45" opacity=".75"/>
+    <path d="M1390 52 C1374 66 1384 94 1400 96 C1416 98 1418 78 1404 72" stroke-width="1.35"/>
+    <path d="M1320 22 C1336 10 1360 14 1356 34 C1354 46 1334 44 1328 32" stroke-width="1.3"/>
+    <path d="M1410 140 C1422 132 1430 150 1416 156 C1404 160 1400 142 1410 140" stroke-width="1.15"/>
+    <circle cx="1400" cy="96" r="2" fill="#c9a24e" stroke="none"/>
+    <circle cx="1328" cy="32" r="1.7" fill="#d8b45f" stroke="none"/>
+
+    <!-- RIGHT edge: irregular -->
+    <path d="M1428 300 C1416 340 1434 380 1420 420 C1410 450 1430 470 1422 500" stroke-width="1.4"/>
+    <path d="M1426 560 C1414 600 1432 640 1418 680 C1410 705 1426 730 1420 760" stroke-width="1.55"/>
+    <path d="M1420 420 C1406 414 1402 432 1416 438" stroke-width="1.1"/>
+    <path d="M1418 680 C1404 672 1398 690 1412 698" stroke-width="1.05"/>
+
+    <!-- BOTTOM-RIGHT corner: richest -->
+    <path d="M1426 690 C1422 760 1410 820 1372 852 C1328 886 1260 882 1180 886" stroke-width="2.5"/>
+    <path d="M1396 760 C1380 810 1340 846 1288 862" stroke-width="1.55" opacity=".78"/>
+    <path d="M1372 852 C1354 838 1330 850 1332 870 C1334 888 1358 886 1360 868" stroke-width="1.4"/>
+    <path d="M1280 874 C1260 860 1234 868 1238 888 C1240 900 1262 896 1264 880" stroke-width="1.35"/>
+    <path d="M1410 720 C1424 712 1430 732 1416 738" stroke-width="1.15"/>
+    <path d="M1348 866 C1358 854 1374 860 1368 876" stroke-width="1.1"/>
+    <path d="M1220 882 C1208 870 1192 880 1200 892" stroke-width="1.05"/>
+    <circle cx="1332" cy="870" r="2.3" fill="#c9a24e" stroke="none"/>
+    <circle cx="1238" cy="888" r="1.9" fill="#d8b45f" stroke="none"/>
+    <circle cx="1368" cy="876" r="1.4" fill="#e9d18f" stroke="none"/>
+
+    <!-- BOTTOM edge: uneven -->
+    <path d="M980 888 C930 878 880 896 830 884 C800 876 780 892 750 886" stroke-width="1.45"/>
+    <path d="M620 890 C570 880 520 898 470 886 C440 878 420 894 390 888" stroke-width="1.35"/>
+    <path d="M830 884 C822 872 804 876 808 890" stroke-width="1.1"/>
+    <path d="M470 886 C458 874 444 882 450 896" stroke-width="1.05"/>
+
+    <!-- BOTTOM-LEFT corner -->
+    <path d="M260 886 C190 882 110 874 64 836 C24 800 18 730 16 670" stroke-width="2.35"/>
+    <path d="M190 874 C130 860 78 820 52 760" stroke-width="1.5" opacity=".76"/>
+    <path d="M64 836 C78 820 66 792 50 796 C34 800 36 822 52 824" stroke-width="1.35"/>
+    <path d="M140 878 C124 864 98 870 104 890 C108 904 130 898 132 880" stroke-width="1.3"/>
+    <path d="M28 720 C14 712 10 732 24 738" stroke-width="1.15"/>
+    <circle cx="50" cy="796" r="2.1" fill="#c9a24e" stroke="none"/>
+    <circle cx="104" cy="890" r="1.8" fill="#d8b45f" stroke="none"/>
+
+    <!-- LEFT edge: thinner, irregular -->
+    <path d="M14 560 C26 520 8 480 22 440 C32 410 12 390 20 360" stroke-width="1.4"/>
+    <path d="M16 300 C28 260 10 220 24 190" stroke-width="1.3"/>
+    <path d="M22 440 C36 446 40 428 26 422" stroke-width="1.05"/>
+    <path d="M24 190 C38 184 42 202 28 208" stroke-width="1"/>
+
+    <!-- Extra freeform flourishes (asymmetric) -->
+    <path d="M240 28 C255 40 278 34 274 18" stroke-width="1.05" opacity=".65"/>
+    <path d="M1120 886 C1134 874 1152 884 1144 898" stroke-width="1" opacity=".65"/>
+    <path d="M1430 250 C1416 258 1418 278 1432 274" stroke-width="1" opacity=".6"/>
+    <path d="M8 640 C20 648 18 666 6 660" stroke-width="1" opacity=".6"/>
+  </g>
+</svg>
