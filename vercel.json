@@ -1,17 +1,14 @@
 {
   "version": 2,
-  "cleanUrls": true,
-  "trailingSlash": false,
   "functions": {
-    "api/index.js": {
+    "api/shop.js": {
       "includeFiles": "{data/**,js/store.js,notify.js,server.js,storage.js}",
       "maxDuration": 30
     }
   },
   "rewrites": [
-    { "source": "/", "destination": "/index.html" },
-    { "source": "/api", "destination": "/api?__path=/api" },
-    { "source": "/api/(.*)", "destination": "/api?__path=/api/$1" },
-    { "source": "/uploads/(.*)", "destination": "/api?__path=/uploads/$1" }
+    { "source": "/api", "destination": "/api/shop?__path=/api" },
+    { "source": "/api/(.*)", "destination": "/api/shop?__path=/api/$1" },
+    { "source": "/uploads/(.*)", "destination": "/api/shop?__path=/uploads/$1" }
   ]
 }
