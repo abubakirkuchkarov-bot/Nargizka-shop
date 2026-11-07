@@ -2,7 +2,7 @@
   "version": 2,
   "functions": {
     "api/index.js": {
-      "includeFiles": "{data/**,admin/**,assets/**,css/**,js/**,uploads/**,index.html,notify.js,server.js,storage.js}",
+      "includeFiles": "**",
       "maxDuration": 30
     }
   },
