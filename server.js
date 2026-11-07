@@ -495,18 +495,6 @@ async function api(req, res, route) {
       listing: listing.slice(0, 50),
     });
   }
-  if (req.method === 'GET' && route === '/api/health') {
-    let listing = [];
-    try { listing = fs.readdirSync(ROOT); } catch (e) { listing = ['err:' + e.message]; }
-    return send(res, 200, {
-      root: ROOT,
-      cwd: process.cwd(),
-      onVercel: ON_VERCEL,
-      hasIndex: fs.existsSync(path.join(ROOT, 'index.html')),
-      hasAdmin: fs.existsSync(path.join(ROOT, 'admin', 'index.html')),
-      listing: listing.slice(0, 50),
-    });
-  }
 
   if (req.method === 'POST' && route === '/api/promo') {
     const c = NS.findPromo(body.code);

@@ -1,13 +1,15 @@
 {
   "version": 2,
+  "buildCommand": "node scripts/vercel-copy-static.js",
   "functions": {
     "api/index.js": {
-      "includeFiles": "**",
+      "includeFiles": "{data/**,js/store.js,notify.js,server.js,storage.js}",
       "maxDuration": 30
     }
   },
   "rewrites": [
-    { "source": "/", "destination": "/api?__path=/" },
-    { "source": "/(.*)", "destination": "/api?__path=/$1" }
+    { "source": "/api", "destination": "/api?__path=/api" },
+    { "source": "/api/(.*)", "destination": "/api?__path=/api/$1" },
+    { "source": "/uploads/(.*)", "destination": "/api?__path=/uploads/$1" }
   ]
 }

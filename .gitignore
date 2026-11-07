@@ -10,6 +10,8 @@ data/*.broken-*.json
 .env.*
 !.env.example
 _patch_server.js
+_probe_prod.js
+public/
 docs/admin-report/_clips/
 docs/admin-report/_lesson/
 **/_e_*/

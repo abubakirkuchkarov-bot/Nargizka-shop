@@ -4,7 +4,8 @@
   "private": true,
   "description": "Nargizka Shop — интернет-магазин женских платьев с админ-панелью",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "vercel-build": "node scripts/vercel-copy-static.js"
   },
   "engines": {
     "node": ">=18"
