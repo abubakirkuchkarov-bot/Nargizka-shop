@@ -635,11 +635,26 @@ function serveStatic(req, res, urlPath) {
   });
 }
 
+function resolveUrlPath(req) {
+  let parsed;
+  try { parsed = new URL(req.url || '/', 'http://localhost'); } catch (e) { return null; }
+  // Vercel rewrite → /api?__path=/original — иначе pathname становится /api и ломает маршруты
+  const viaQuery = parsed.searchParams.get('__path');
+  if (viaQuery) {
+    const q = new URLSearchParams(parsed.search);
+    q.delete('__path');
+    const rest = q.toString();
+    req.url = viaQuery + (rest ? '?' + rest : '');
+    return decodeURIComponent(viaQuery.split('?')[0] || '/');
+  }
+  return decodeURIComponent(parsed.pathname || '/');
+}
+
 function requestListener(req, res) {
-  let urlPath;
-  try { urlPath = decodeURIComponent(new URL(req.url, 'http://localhost').pathname); } catch (e) { res.writeHead(400); return res.end(); }
-  if (urlPath.startsWith('/api/')) {
-    api(req, res, urlPath).catch((e) => {
+  const urlPath = resolveUrlPath(req);
+  if (!urlPath) { res.writeHead(400); return res.end(); }
+  if (urlPath === '/api' || urlPath.startsWith('/api/')) {
+    api(req, res, urlPath === '/api' ? '/api/' : urlPath).catch((e) => {
       if (!e.status) console.error(e);
       if (!res.headersSent) send(res, e.status || 500, { error: e.status ? e.message : 'Внутренняя ошибка сервера' });
     });
