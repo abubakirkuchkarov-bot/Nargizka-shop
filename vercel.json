@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "functions": {
+    "api/index.js": {
+      "includeFiles": "{data/**,admin/**,assets/**,css/**,js/**,uploads/**,index.html,notify.js,server.js,storage.js}",
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/api" }
+  ]
+}

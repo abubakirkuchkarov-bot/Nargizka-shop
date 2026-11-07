@@ -6,9 +6,10 @@ const tls = require('tls');
 const https = require('https');
 const http = require('http');
 
-const ROOT = __dirname;
-const CFG_FILE = path.join(ROOT, 'data', 'notify.json');
-const OUTBOX = path.join(ROOT, 'data', 'outbox.json');
+const storage = require('./storage');
+storage.ensureRuntimeData();
+const CFG_FILE = storage.NOTIFY_FILE;
+const OUTBOX = storage.OUTBOX_FILE;
 
 const DEFAULTS = {
   email: {

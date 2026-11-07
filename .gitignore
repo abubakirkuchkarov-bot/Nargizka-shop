@@ -3,10 +3,13 @@ uploads/*
 !uploads/.gitkeep
 data/auth.json
 data/notify.json
+data/outbox.json
+data/db.local-backup.json
 data/*.broken-*.json
 .env
 .env.*
 !.env.example
+_patch_server.js
 docs/admin-report/_clips/
 docs/admin-report/_lesson/
 **/_e_*/

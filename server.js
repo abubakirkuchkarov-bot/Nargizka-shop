@@ -7,12 +7,15 @@ const crypto = require('crypto');
 const NS = require('./js/store.js');
 const Notify = require('./notify');
 
-const ROOT = __dirname;
+const storage = require('./storage');
+const paths = storage.ensureRuntimeData();
+const ROOT = paths.ROOT;
 const PORT = +process.env.PORT || 3000;
-const DATA_DIR = path.join(ROOT, 'data');
-const DB_FILE = path.join(DATA_DIR, 'db.json');
-const AUTH_FILE = path.join(DATA_DIR, 'auth.json');
-const UPLOADS = path.join(ROOT, 'uploads');
+const DATA_DIR = paths.DATA_DIR;
+const DB_FILE = paths.DB_FILE;
+const AUTH_FILE = paths.AUTH_FILE;
+const UPLOADS = paths.UPLOADS;
+const ON_VERCEL = paths.ON_VERCEL;
 const MAX_BODY = 25 * 1024 * 1024;
 const MAX_IMAGE = 10 * 1024 * 1024;
 const SESSION_TTL = 7 * 86400000;
@@ -30,9 +33,6 @@ const TYPES = {
   '.json': 'application/json; charset=utf-8',
 };
 const DELIVERY = { courier: 'Курьер', express: 'Экспресс', pickup: 'Самовывоз' };
-
-fs.mkdirSync(DATA_DIR, { recursive: true });
-fs.mkdirSync(UPLOADS, { recursive: true });
 
 /* ---------- данные ---------- */
 let db;
@@ -76,20 +76,30 @@ function setPassword(pw, isDefault) {
 }
 if (!auth || !auth.hash) setPassword(process.env.ADMIN_PASSWORD || 'admin', !process.env.ADMIN_PASSWORD);
 
-const sessions = new Map();
 const attempts = new Map();
+const SESSION_SECRET = process.env.SESSION_SECRET || auth.salt || crypto.randomBytes(16).toString('hex');
 
 function passwordOk(pw) {
   const a = Buffer.from(hashPassword(pw, auth.salt), 'hex');
   const b = Buffer.from(auth.hash, 'hex');
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
+function issueSession() {
+  const exp = String(Date.now() + SESSION_TTL);
+  const sig = crypto.createHmac('sha256', SESSION_SECRET).update(exp).digest('hex');
+  return exp + '.' + sig;
+}
 function isAdmin(req) {
-  const m = /^Bearer (\w+)$/.exec(req.headers.authorization || '');
-  const exp = m && sessions.get(m[1]);
-  if (!exp) return false;
-  if (exp < Date.now()) { sessions.delete(m[1]); return false; }
-  return true;
+  const m = /^Bearer ([\da-f]+\.[\da-f]+)$/i.exec(req.headers.authorization || '');
+  if (!m) return false;
+  const [exp, sig] = m[1].split('.');
+  const expect = crypto.createHmac('sha256', SESSION_SECRET).update(exp).digest('hex');
+  try {
+    const a = Buffer.from(sig, 'hex');
+    const b = Buffer.from(expect, 'hex');
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
+  } catch (_) { return false; }
+  return +exp > Date.now();
 }
 
 /* ---------- утилиты ---------- */
@@ -515,9 +525,7 @@ async function api(req, res, route) {
       throw fail(401, 'Неверный пароль');
     }
     attempts.delete(ip);
-    const token = crypto.randomBytes(24).toString('hex');
-    sessions.set(token, Date.now() + SESSION_TTL);
-    return send(res, 200, { token });
+    return send(res, 200, { token: issueSession() });
   }
 
   if (!route.startsWith('/api/admin/')) throw fail(404, 'Не найдено');
@@ -599,7 +607,6 @@ async function api(req, res, route) {
       return send(res, 200, adminDB());
     }
     case 'POST /api/admin/logout':
-      sessions.delete((req.headers.authorization || '').replace('Bearer ', ''));
       return send(res, 200, { ok: true });
     default: throw fail(404, 'Не найдено');
   }
@@ -628,7 +635,7 @@ function serveStatic(req, res, urlPath) {
   });
 }
 
-http.createServer((req, res) => {
+function requestListener(req, res) {
   let urlPath;
   try { urlPath = decodeURIComponent(new URL(req.url, 'http://localhost').pathname); } catch (e) { res.writeHead(400); return res.end(); }
   if (urlPath.startsWith('/api/')) {
@@ -639,7 +646,13 @@ http.createServer((req, res) => {
     return;
   }
   serveStatic(req, res, urlPath);
-}).listen(PORT, () => {
-  console.log(`Nargizka Shop:  http://localhost:${PORT}`);
-  console.log(`Админ-панель:   http://localhost:${PORT}/admin/${auth.isDefault ? '  (пароль по умолчанию: admin — смените его в настройках)' : ''}`);
-});
+}
+
+if (require.main === module && !ON_VERCEL) {
+  http.createServer(requestListener).listen(PORT, () => {
+    console.log('Nargizka Shop:  http://localhost:' + PORT);
+    console.log('Админ-панель:   http://localhost:' + PORT + '/admin/' + (auth.isDefault ? '  (пароль по умолчанию: admin — смените его в настройках)' : ''));
+  });
+}
+
+module.exports = requestListener;
