@@ -16,6 +16,14 @@ const DB_FILE = paths.DB_FILE;
 const AUTH_FILE = paths.AUTH_FILE;
 const UPLOADS = paths.UPLOADS;
 const ON_VERCEL = paths.ON_VERCEL;
+// На Vercel «/» иногда попадает в serverless — отдаём статику из public/, если она есть в бандле
+const STATIC_ROOT = (() => {
+  const pub = path.join(ROOT, 'public');
+  try {
+    if (fs.existsSync(path.join(pub, 'index.html'))) return pub;
+  } catch (_) {}
+  return ROOT;
+})();
 const MAX_BODY = 25 * 1024 * 1024;
 const MAX_IMAGE = 10 * 1024 * 1024;
 const SESSION_TTL = 7 * 86400000;
@@ -636,9 +644,15 @@ function serveStatic(req, res, urlPath) {
   }
   // Нельзя path.join(ROOT, '/...') — на POSIX второй абсолютный сегмент сбрасывает ROOT
   const rel = urlPath.replace(/^\/+/, '');
-  let file = path.normalize(path.join(ROOT, rel));
-  if (!file.startsWith(ROOT)) { res.writeHead(403); return res.end(); }
+  const base = parts[0] === 'uploads' ? ROOT : STATIC_ROOT;
+  let file = path.normalize(path.join(base, rel));
+  if (!file.startsWith(base)) { res.writeHead(403); return res.end(); }
   if (!rel || urlPath.endsWith('/')) file = path.join(file, 'index.html');
+  // uploads на Vercel лежат в /tmp
+  if (parts[0] === 'uploads') {
+    file = path.normalize(path.join(UPLOADS, parts.slice(1).join(path.sep)));
+    if (!file.startsWith(UPLOADS)) { res.writeHead(403); return res.end(); }
+  }
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('Не найдено'); }
     const ext = path.extname(file).toLowerCase();

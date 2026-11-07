@@ -2,12 +2,12 @@
   "version": 2,
   "functions": {
     "api/shop.js": {
-      "includeFiles": "{data/**,js/store.js,notify.js,server.js,storage.js}",
+      "includeFiles": "{data/**,public/**,js/store.js,notify.js,server.js,storage.js}",
       "maxDuration": 30
     }
   },
   "rewrites": [
-    { "source": "/", "destination": "/index.html" },
+    { "source": "/", "destination": "/api/shop?__path=/" },
     { "source": "/api", "destination": "/api/shop?__path=/api" },
     { "source": "/api/(.*)", "destination": "/api/shop?__path=/api/$1" },
     { "source": "/uploads/(.*)", "destination": "/api/shop?__path=/uploads/$1" }
