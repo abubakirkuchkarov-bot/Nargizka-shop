@@ -492,6 +492,21 @@ async function api(req, res, route) {
   if (req.method === 'GET' && route === '/api/db') return send(res, 200, publicDB());
   if (req.method === 'GET' && route === '/api/rev') return send(res, 200, { rev });
   if (req.method === 'GET' && route === '/api/health') {
+    const pub = path.join(ROOT, 'public');
+    let listing = [];
+    try { listing = fs.readdirSync(ROOT); } catch (e) { listing = [String(e.message)]; }
+    let pubListing = [];
+    try { pubListing = fs.readdirSync(pub); } catch (e) { pubListing = [String(e.message)]; }
+    return send(res, 200, {
+      root: ROOT,
+      staticRoot: STATIC_ROOT,
+      hasPublicIndex: fs.existsSync(path.join(pub, 'index.html')),
+      hasRootIndex: fs.existsSync(path.join(ROOT, 'index.html')),
+      listing,
+      pubListing,
+    });
+  }
+  if (req.method === 'GET' && route === '/api/health') {
     let listing = [];
     try { listing = fs.readdirSync(ROOT); } catch (e) { listing = ['err:' + e.message]; }
     return send(res, 200, {
