@@ -2,7 +2,7 @@
   "version": 2,
   "functions": {
     "api/shop.js": {
-      "includeFiles": "{data/**,public/**,js/store.js,notify.js,server.js,storage.js}",
+      "includeFiles": "{data/**,js/store.js,notify.js,server.js,storage.js}",
       "maxDuration": 30
     }
   },

@@ -16,8 +16,12 @@ const DB_FILE = paths.DB_FILE;
 const AUTH_FILE = paths.AUTH_FILE;
 const UPLOADS = paths.UPLOADS;
 const ON_VERCEL = paths.ON_VERCEL;
-// На Vercel «/» иногда попадает в serverless — отдаём статику из public/, если она есть в бандле
+// На Vercel «/» попадает в serverless; HTML/CSS лежат в data/www (includeFiles data/**)
 const STATIC_ROOT = (() => {
+  const bundled = path.join(ROOT, 'data', 'www');
+  try {
+    if (fs.existsSync(path.join(bundled, 'index.html'))) return bundled;
+  } catch (_) {}
   const pub = path.join(ROOT, 'public');
   try {
     if (fs.existsSync(path.join(pub, 'index.html'))) return pub;
@@ -491,21 +495,6 @@ async function api(req, res, route) {
 
   if (req.method === 'GET' && route === '/api/db') return send(res, 200, publicDB());
   if (req.method === 'GET' && route === '/api/rev') return send(res, 200, { rev });
-  if (req.method === 'GET' && route === '/api/health') {
-    const pub = path.join(ROOT, 'public');
-    let listing = [];
-    try { listing = fs.readdirSync(ROOT); } catch (e) { listing = [String(e.message)]; }
-    let pubListing = [];
-    try { pubListing = fs.readdirSync(pub); } catch (e) { pubListing = [String(e.message)]; }
-    return send(res, 200, {
-      root: ROOT,
-      staticRoot: STATIC_ROOT,
-      hasPublicIndex: fs.existsSync(path.join(pub, 'index.html')),
-      hasRootIndex: fs.existsSync(path.join(ROOT, 'index.html')),
-      listing,
-      pubListing,
-    });
-  }
   if (req.method === 'GET' && route === '/api/health') {
     let listing = [];
     try { listing = fs.readdirSync(ROOT); } catch (e) { listing = ['err:' + e.message]; }

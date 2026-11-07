@@ -1,9 +1,8 @@
-/** Копирует витрину и админку в public/ для статической раздачи на Vercel. */
+/** Копирует витрину в data/www (попадает в serverless через includeFiles data/**) и в public/. */
 const fs = require('fs');
 const path = require('path');
 
 const root = path.join(__dirname, '..');
-const pub = path.join(root, 'public');
 
 function cp(src, dest) {
   const st = fs.statSync(src);
@@ -19,13 +18,16 @@ function cp(src, dest) {
   fs.copyFileSync(src, dest);
 }
 
-fs.rmSync(pub, { recursive: true, force: true });
-fs.mkdirSync(pub, { recursive: true });
-
-for (const name of ['index.html', 'admin', 'css', 'js', 'assets', 'uploads']) {
-  const src = path.join(root, name);
-  if (!fs.existsSync(src)) continue;
-  cp(src, path.join(pub, name));
+function syncTo(dest) {
+  fs.rmSync(dest, { recursive: true, force: true });
+  fs.mkdirSync(dest, { recursive: true });
+  for (const name of ['index.html', 'admin', 'css', 'js', 'assets']) {
+    const src = path.join(root, name);
+    if (!fs.existsSync(src)) continue;
+    cp(src, path.join(dest, name));
+  }
 }
 
-console.log('vercel-copy-static: public/ ready');
+syncTo(path.join(root, 'data', 'www'));
+syncTo(path.join(root, 'public'));
+console.log('vercel-copy-static: data/www + public ready');
