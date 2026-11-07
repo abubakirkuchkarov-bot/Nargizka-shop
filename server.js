@@ -622,9 +622,11 @@ function serveStatic(req, res, urlPath) {
   if (parts[0] === 'data' || parts.some((p) => p.startsWith('.') || p.startsWith('_')) || /\.(tmp|md)$/i.test(urlPath) || urlPath === '/server.js') {
     res.writeHead(404); return res.end();
   }
-  let file = path.normalize(path.join(ROOT, urlPath));
+  // Нельзя path.join(ROOT, '/...') — на POSIX второй абсолютный сегмент сбрасывает ROOT
+  const rel = urlPath.replace(/^\/+/, '');
+  let file = path.normalize(path.join(ROOT, rel));
   if (!file.startsWith(ROOT)) { res.writeHead(403); return res.end(); }
-  if (urlPath.endsWith('/')) file = path.join(file, 'index.html');
+  if (!rel || urlPath.endsWith('/')) file = path.join(file, 'index.html');
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('Не найдено'); }
     const ext = path.extname(file).toLowerCase();
