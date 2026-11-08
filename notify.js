@@ -6,10 +6,13 @@ const tls = require('tls');
 const https = require('https');
 const http = require('http');
 
-const storage = require('./storage');
-storage.ensureRuntimeData();
-const CFG_FILE = storage.NOTIFY_FILE;
-const OUTBOX = storage.OUTBOX_FILE;
+// Настройки и журнал отправок хранятся в базе (db/store.js). Контекст текущего запроса
+// передаётся через AsyncLocalStorage: { cfg, outbox, pending: [], cfgDirty }.
+const { AsyncLocalStorage } = require('async_hooks');
+const als = new AsyncLocalStorage();
+const fallbackCtx = { cfg: null, outbox: [], pending: [], cfgDirty: false };
+const ctx = () => als.getStore() || fallbackCtx;
+function runWith(context, fn) { return als.run(context, fn); }
 
 const DEFAULTS = {
   email: {
@@ -38,21 +41,18 @@ const DEFAULTS = {
 };
 
 function loadCfg() {
-  try {
-    if (fs.existsSync(CFG_FILE)) {
-      const raw = JSON.parse(fs.readFileSync(CFG_FILE, 'utf8'));
-      return {
-        email: Object.assign({}, DEFAULTS.email, raw.email || {}),
-        sms: Object.assign({}, DEFAULTS.sms, raw.sms || {}),
-        telegram: Object.assign({}, DEFAULTS.telegram, raw.telegram || {}),
-      };
-    }
-  } catch (_) {}
+  const raw = ctx().cfg;
+  if (raw && typeof raw === 'object') {
+    return {
+      email: Object.assign({}, DEFAULTS.email, raw.email || {}),
+      sms: Object.assign({}, DEFAULTS.sms, raw.sms || {}),
+      telegram: Object.assign({}, DEFAULTS.telegram, raw.telegram || {}),
+    };
+  }
   return JSON.parse(JSON.stringify(DEFAULTS));
 }
 
 function saveCfg(cfg) {
-  fs.mkdirSync(path.dirname(CFG_FILE), { recursive: true });
   const clean = {
     email: {
       enabled: !!cfg.email.enabled,
@@ -78,7 +78,9 @@ function saveCfg(cfg) {
       chatId: String(cfg.telegram.chatId || '').trim(),
     },
   };
-  fs.writeFileSync(CFG_FILE, JSON.stringify(clean, null, 2));
+  const c = ctx();
+  c.cfg = clean;
+  c.cfgDirty = true;
   return clean;
 }
 
@@ -111,18 +113,13 @@ function publicCfg(cfg) {
 }
 
 function pushOutbox(entry) {
-  let list = [];
-  try { list = JSON.parse(fs.readFileSync(OUTBOX, 'utf8')); } catch (_) {}
-  if (!Array.isArray(list)) list = [];
-  list.unshift(Object.assign({ id: Date.now().toString(36), at: Date.now() }, entry));
-  fs.writeFileSync(OUTBOX, JSON.stringify(list.slice(0, 200), null, 2));
+  const e = Object.assign({ id: Date.now().toString(36) + Math.floor(Math.random() * 1000), at: Date.now() }, entry);
+  ctx().pending.unshift(e);
 }
 
 function readOutbox(limit) {
-  try {
-    const list = JSON.parse(fs.readFileSync(OUTBOX, 'utf8'));
-    return Array.isArray(list) ? list.slice(0, limit || 40) : [];
-  } catch (_) { return []; }
+  const c = ctx();
+  return c.pending.concat(c.outbox || []).slice(0, limit || 40);
 }
 
 function b64(s) {
@@ -363,6 +360,7 @@ function status() {
 }
 
 module.exports = {
+  runWith,
   loadCfg, saveCfg, publicCfg, readOutbox, status,
   sendEmail, sendSmsSafe, notifyAdmin, normPhone,
 };

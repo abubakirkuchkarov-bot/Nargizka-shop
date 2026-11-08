@@ -1,21 +1,18 @@
 // Сервер Nargizka Shop без внешних зависимостей: node server.js
 // Витрина — http://localhost:3000, админ-панель — http://localhost:3000/admin/
+// Данные: Turso (libSQL) в продакшене, локальный SQLite-файл при разработке — см. db/store.js
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const NS = require('./js/store.js');
 const Notify = require('./notify');
+const Store = require('./db/store');
 
-const storage = require('./storage');
-const paths = storage.ensureRuntimeData();
-const ROOT = paths.ROOT;
+const ROOT = __dirname;
 const PORT = +process.env.PORT || 3000;
-const DATA_DIR = paths.DATA_DIR;
-const DB_FILE = paths.DB_FILE;
-const AUTH_FILE = paths.AUTH_FILE;
-const UPLOADS = paths.UPLOADS;
-const ON_VERCEL = paths.ON_VERCEL;
+const ON_VERCEL = Store.ON_VERCEL;
+const IS_PROD = Store.IS_PROD;
 // На Vercel «/» попадает в serverless; HTML/CSS лежат в data/www (includeFiles data/**)
 const STATIC_ROOT = (() => {
   const bundled = path.join(ROOT, 'data', 'www');
@@ -28,9 +25,12 @@ const STATIC_ROOT = (() => {
   } catch (_) {}
   return ROOT;
 })();
-const MAX_BODY = 25 * 1024 * 1024;
-const MAX_IMAGE = 10 * 1024 * 1024;
-const SESSION_TTL = 7 * 86400000;
+const LEGACY_UPLOADS = path.join(ROOT, 'uploads');
+// Vercel не принимает тело запроса больше 4,5 МБ; фото сжимаются в админке до ~1–2 МБ
+const MAX_BODY = 4.4 * 1024 * 1024;
+const MAX_IMAGE = 3 * 1024 * 1024;
+const SESSION_TTL = 2 * 86400000;
+const MIN_PASSWORD = 8;
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -41,77 +41,157 @@ const TYPES = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
+  '.gif': 'image/gif',
   '.ico': 'image/x-icon',
   '.json': 'application/json; charset=utf-8',
 };
 const DELIVERY = { courier: 'Курьер', express: 'Экспресс', pickup: 'Самовывоз' };
 
-/* ---------- данные ---------- */
+/* ---------- данные текущего запроса ----------
+ * Бизнес-функции ниже работают с переменными db/auth как раньше.
+ * Внутри одного процесса запросы к данным выполняются по очереди (mutex),
+ * между процессами согласованность обеспечивает транзакция базы.
+ */
 let db;
-let rev = Date.now();
-
-function persist() {
-  rev++;
-  const tmp = DB_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(db));
-  fs.renameSync(tmp, DB_FILE);
-}
-
-function setDB(next) {
-  db = NS.migrate(next);
+let rev = 0;
+let auth = null;
+let current = null;
+function persist() { /* изменения записывает db/store.js после обработчика */ }
+function bind(state) {
+  current = state;
+  db = NS.migrate(state.db);
+  state.db = db;
   NS.db = db;
+  rev = state.rev;
+  auth = state.auth || null;
+}
+let queue = Promise.resolve();
+function exclusive(fn) {
+  const run = queue.then(fn, fn);
+  queue = run.catch(() => {});
+  return run;
+}
+const ALL_PARTS = ['products', 'settings', 'orders', 'finance', 'subscribers', 'auth'];
+
+async function readData(parts, fn) {
+  await ensureReady();
+  return exclusive(async () => {
+    const state = await Store.read(parts);
+    bind(state);
+    return fn(state);
+  });
+}
+async function writeData(parts, fn) {
+  await ensureReady();
+  return exclusive(async () => {
+    const { state, result } = await Store.write(parts, async (st) => {
+      bind(st);
+      const r = await fn(st);
+      st.auth = auth;
+      return r;
+    });
+    if (result && typeof result === 'object' && 'rev' in result) result.rev = state.rev;
+    return result;
+  });
 }
 
-(function loadDB() {
-  if (fs.existsSync(DB_FILE)) {
-    try {
-      setDB(JSON.parse(fs.readFileSync(DB_FILE, 'utf8')));
-      return;
-    } catch (e) {
-      const broken = DB_FILE.replace('.json', `.broken-${Date.now()}.json`);
-      fs.renameSync(DB_FILE, broken);
-      console.error('Файл данных повреждён, сохранён как', broken);
-    }
+/* Пустая база: локально заполняем из data/db.json, в продакшене — ждём ручного переноса (scripts/migrate-to-turso.js). */
+let ready = null;
+function ensureReady() {
+  if (!ready) {
+    ready = (async () => {
+      const st = await Store.read([]);
+      if (st.initialized) return;
+      if (Store.storageKind() !== 'local') throw fail(503, 'Магазин готовится к запуску. Загляните чуть позже.');
+      const file = path.join(ROOT, 'data', 'db.json');
+      const src = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : JSON.stringify(NS.seedDB());
+      try {
+        await Store.importSnapshot(await Store.getClient(), src, { sourceName: 'local data/db.json' });
+      } catch (e) {
+        if (e.code !== 'ALREADY_INITIALIZED') throw e;
+      }
+    })().catch((e) => { ready = null; throw e; });
   }
-  setDB(NS.seedDB());
-  persist();
-})();
+  return ready;
+}
 
 /* ---------- пароль и сессии ---------- */
 const hashPassword = (pw, salt) => crypto.scryptSync(String(pw), salt, 64).toString('hex');
-let auth = null;
-try { auth = JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8')); } catch (e) { auth = null; }
-function setPassword(pw, isDefault) {
+function makeAuth(pw, isDefault, prev) {
   const salt = crypto.randomBytes(16).toString('hex');
-  auth = { salt, hash: hashPassword(pw, salt), isDefault: !!isDefault };
-  fs.writeFileSync(AUTH_FILE, JSON.stringify(auth));
+  return { salt, hash: hashPassword(pw, salt), isDefault: !!isDefault, epoch: ((prev && prev.epoch) || 0) + 1, changedAt: Date.now() };
 }
-if (!auth || !auth.hash) setPassword(process.env.ADMIN_PASSWORD || 'admin', !process.env.ADMIN_PASSWORD);
+function setPassword(pw, isDefault) {
+  auth = makeAuth(pw, isDefault, auth);
+}
 
-const attempts = new Map();
-const SESSION_SECRET = process.env.SESSION_SECRET || auth.salt || crypto.randomBytes(16).toString('hex');
+/* SESSION_SECRET обязателен в продакшене; локально — случайный на время работы процесса */
+const LOCAL_SECRET = crypto.randomBytes(32).toString('hex');
+function sessionSecret() {
+  const s = process.env.SESSION_SECRET || '';
+  if (s.length >= 32) return s;
+  if (IS_PROD) throw fail(503, 'Вход в админ-панель отключён: не задан SESSION_SECRET (не короче 32 символов)');
+  return LOCAL_SECRET;
+}
+/* Пароль администратора: из базы; при первом запуске — из ADMIN_PASSWORD. В продакшене пароля «admin» нет. */
+function ensureAuth() {
+  if (auth && auth.hash) return false;
+  const envPw = process.env.ADMIN_PASSWORD || '';
+  if (envPw) {
+    if (IS_PROD && envPw.length < 10) throw fail(503, 'ADMIN_PASSWORD слишком короткий (нужно не меньше 10 символов)');
+    setPassword(envPw, false);
+    return true;
+  }
+  if (IS_PROD) throw fail(503, 'Вход в админ-панель отключён: не задан ADMIN_PASSWORD');
+  setPassword('admin', true);
+  return true;
+}
 
 function passwordOk(pw) {
   const a = Buffer.from(hashPassword(pw, auth.salt), 'hex');
   const b = Buffer.from(auth.hash, 'hex');
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
-function issueSession() {
-  const exp = String(Date.now() + SESSION_TTL);
-  const sig = crypto.createHmac('sha256', SESSION_SECRET).update(exp).digest('hex');
-  return exp + '.' + sig;
+const b64u = (s) => Buffer.from(s).toString('base64url');
+function sign(payload) {
+  return crypto.createHmac('sha256', sessionSecret()).update(payload).digest('base64url');
 }
-function isAdmin(req) {
-  const m = /^Bearer ([\da-f]+\.[\da-f]+)$/i.exec(req.headers.authorization || '');
-  if (!m) return false;
-  const [exp, sig] = m[1].split('.');
-  const expect = crypto.createHmac('sha256', SESSION_SECRET).update(exp).digest('hex');
-  try {
-    const a = Buffer.from(sig, 'hex');
-    const b = Buffer.from(expect, 'hex');
-    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
-  } catch (_) { return false; }
-  return +exp > Date.now();
+function issueSession() {
+  const payload = b64u(JSON.stringify({ exp: Date.now() + SESSION_TTL, ep: auth.epoch || 0, n: crypto.randomBytes(6).toString('hex') }));
+  return 'v2.' + payload + '.' + sign(payload);
+}
+/* Проверка токена; epoch меняется при смене пароля — старые сессии перестают действовать */
+function verifySession(req) {
+  const m = /^Bearer v2\.([\w-]+)\.([\w-]+)$/.exec(req.headers.authorization || '');
+  if (!m) return null;
+  let expect;
+  try { expect = sign(m[1]); } catch (_) { return null; }
+  const a = Buffer.from(m[2]);
+  const b = Buffer.from(expect);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  let p;
+  try { p = JSON.parse(Buffer.from(m[1], 'base64url').toString('utf8')); } catch (_) { return null; }
+  if (!p || !(+p.exp > Date.now())) return null;
+  return p;
+}
+function isAdminFor(req, state) {
+  const p = verifySession(req);
+  if (!p) return false;
+  const a = state.auth;
+  return !!(a && a.hash && (a.epoch || 0) === p.ep);
+}
+
+function clientIp(req) {
+  const h = req.headers['x-real-ip'] || req.headers['x-vercel-forwarded-for'] || req.headers['x-forwarded-for'] || '';
+  return String(h).split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
+}
+async function limit(key, max, windowMs, message) {
+  const r = await Store.hit(key, windowMs);
+  if (r.count > max) {
+    const e = fail(429, message || 'Слишком много запросов. Попробуйте позже.');
+    e.retryAfter = Math.max(1, Math.ceil((r.resetAt - Date.now()) / 1000));
+    throw e;
+  }
 }
 
 /* ---------- утилиты ---------- */
@@ -124,6 +204,9 @@ const str = (v, max) => String(v == null ? '' : v).trim().slice(0, max);
 const int = (v, min, max) => Math.min(max, Math.max(min, Math.round(+v || 0)));
 
 function readBody(req) {
+  if (req.body !== undefined && req.body !== null && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
+    return Promise.resolve(req.body);
+  }
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
@@ -137,8 +220,13 @@ function readBody(req) {
     req.on('error', reject);
   });
 }
-function send(res, status, data) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+const SECURITY_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'X-Frame-Options': 'SAMEORIGIN',
+};
+function send(res, status, data, extra) {
+  res.writeHead(status, Object.assign({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }, SECURITY_HEADERS, extra || {}));
   res.end(JSON.stringify(data));
 }
 
@@ -152,7 +240,7 @@ function publicDB() {
   return { rev, db: { version: db.version, products: db.products.filter((p) => p.visible), settings, orders: [], subscribers: [] } };
 }
 function adminDB() {
-  return { rev, db, defaultPassword: !!auth.isDefault };
+  return { rev, db, defaultPassword: !!(auth && auth.isDefault) };
 }
 
 function activeSizes() {
@@ -476,160 +564,281 @@ function applyStockMove(b) {
   return { product: p, mode, size, qty };
 }
 
-function saveUpload(data) {
-  const m = /^data:image\/([a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/i.exec(String(data || ''));
+
+/* ---------- фото: хранятся в базе (таблица images), отдаются через CDN с долгим кэшем ---------- */
+function detectImage(buf) {
+  if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return { ext: 'jpg', mime: 'image/jpeg' };
+  if (buf.length > 8 && buf.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return { ext: 'png', mime: 'image/png' };
+  if (buf.length > 12 && buf.slice(0, 4).toString('latin1') === 'RIFF' && buf.slice(8, 12).toString('latin1') === 'WEBP') return { ext: 'webp', mime: 'image/webp' };
+  if (buf.length > 6 && /^GIF8[79]a$/.test(buf.slice(0, 6).toString('latin1'))) return { ext: 'gif', mime: 'image/gif' };
+  return null;
+}
+async function saveUpload(data) {
+  const m = /^data:image\/[a-z0-9.+-]+;base64,([A-Za-z0-9+/=]+)$/i.exec(String(data || ''));
   if (!m) throw fail(400, 'Не удалось принять фото. Загрузите изображение ещё раз.');
-  const buf = Buffer.from(m[2], 'base64');
-  if (buf.length > MAX_IMAGE) throw fail(413, 'Фото больше 10 МБ');
-  const extMap = { jpeg: 'jpg', jpg: 'jpg', png: 'png', webp: 'webp', gif: 'gif', bmp: 'png', 'svg+xml': 'png', heic: 'jpg', heif: 'jpg', avif: 'jpg' };
-  const ext = extMap[m[1].toLowerCase()] || 'jpg';
-  const name = Date.now().toString(36) + crypto.randomBytes(5).toString('hex') + '.' + ext;
-  fs.writeFileSync(path.join(UPLOADS, name), buf);
+  const buf = Buffer.from(m[1], 'base64');
+  if (buf.length > MAX_IMAGE) throw fail(413, 'Фото больше 3 МБ после сжатия. Попробуйте другое фото.');
+  const kind = detectImage(buf);
+  if (!kind) throw fail(400, 'Поддерживаются только JPG, PNG, WebP и GIF');
+  const name = Date.now().toString(36) + crypto.randomBytes(8).toString('hex') + '.' + kind.ext;
+  await Store.putImage(name, kind.mime, buf);
   return '/uploads/' + name;
+}
+async function serveUpload(res, name) {
+  if (!/^[\w-]+\.(jpg|jpeg|png|webp|gif)$/i.test(name)) { res.writeHead(404); return res.end(); }
+  let img = null;
+  try { img = await Store.getImage(name); } catch (e) { console.error('image read failed:', e.message); }
+  if (!img) {
+    const file = path.join(LEGACY_UPLOADS, name);
+    if (!ON_VERCEL && fs.existsSync(file)) img = { mime: TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream', data: fs.readFileSync(file) };
+  }
+  if (!img) { res.writeHead(404, Object.assign({ 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' }, SECURITY_HEADERS)); return res.end('Не найдено'); }
+  res.writeHead(200, Object.assign({
+    'Content-Type': img.mime,
+    'Content-Length': img.data.length,
+    'Cache-Control': 'public, max-age=31536000, immutable',
+    'CDN-Cache-Control': 'public, max-age=31536000, immutable',
+  }, SECURITY_HEADERS));
+  res.end(img.data);
+}
+
+/* ---------- уведомления после записи заказа (вне транзакции) ---------- */
+function useNotify(state, c) {
+  if (state.notify !== undefined) c.cfg = state.notify;
+  if (state.outbox) c.outbox = state.outbox;
+  return c;
+}
+async function flushNotify(c) {
+  try {
+    const pending = c.pending.splice(0);
+    if (pending.length) await Store.appendOutbox(pending.slice().reverse());
+    if (c.cfgDirty) { c.cfgDirty = false; await Store.saveKv('notify', c.cfg); }
+  } catch (e) { console.error('notify flush failed:', e.message); }
+}
+const withTimeout = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(r, ms))]);
+
+async function afterOrder(order) {
+  const c = { cfg: null, outbox: [], pending: [], cfgDirty: false };
+  await Notify.runWith(c, async () => {
+    try {
+      const st = await Store.read(['notify']);
+      c.cfg = st.notify;
+      const s = Notify.status();
+      const jobs = [];
+      const lines = order.items.map((i) => '• ' + i.name + ' (' + i.color + ', ' + i.size + ') ×' + i.qty).join('\n');
+      if (s.telegramReady || s.emailReady) {
+        jobs.push(Notify.notifyAdmin('Новый заказ ' + order.id + '\n' + order.customer.name + ', ' + order.customer.phone
+          + '\n' + lines + '\nИтого: ' + moneyUz(order.total) + '\n' + order.delivery + ' · ' + order.payment).catch(() => {}));
+      }
+      if (s.emailReady && order.customer.email) jobs.push(sendOrderMail(order).catch(() => {}));
+      if (s.smsReady && order.customer.phone) jobs.push(sendOrderSms(order).catch(() => {}));
+      if (jobs.length) await withTimeout(Promise.all(jobs), 6000);
+    } catch (e) {
+      console.error('order notify failed:', e.message);
+    }
+    await flushNotify(c);
+  });
 }
 
 /* ---------- API ---------- */
-async function api(req, res, route) {
-  const ip = req.socket.remoteAddress || '';
-  const body = req.method === 'POST' ? await readBody(req) : {};
+async function requireAdmin(req, state) {
+  if (!isAdminFor(req, state)) throw fail(401, 'Требуется вход в админ-панель');
+}
+const ADMIN_ALL = ALL_PARTS.concat(['notify']);
 
-  if (req.method === 'GET' && route === '/api/db') return send(res, 200, publicDB());
-  if (req.method === 'GET' && route === '/api/rev') return send(res, 200, { rev });
+async function api(req, res, route) {
+  const ip = clientIp(req);
+  const body = req.method === 'POST' ? await readBody(req) : {};
+  const nctx = { cfg: null, outbox: [], pending: [], cfgDirty: false };
+
+  if (req.method === 'GET' && route === '/api/rev') {
+    await ensureReady();
+    const st = await Store.read([]);
+    return send(res, 200, { rev: st.rev });
+  }
   if (req.method === 'GET' && route === '/api/health') {
-    let listing = [];
-    try { listing = fs.readdirSync(ROOT); } catch (e) { listing = ['err:' + e.message]; }
-    return send(res, 200, {
-      root: ROOT,
-      cwd: process.cwd(),
-      onVercel: ON_VERCEL,
-      hasIndex: fs.existsSync(path.join(ROOT, 'index.html')),
-      hasAdmin: fs.existsSync(path.join(ROOT, 'admin', 'index.html')),
-      listing: listing.slice(0, 50),
+    let dbOk = false;
+    let initialized = false;
+    try { const st = await Store.read([]); dbOk = true; initialized = st.initialized; } catch (_) {}
+    return send(res, dbOk && initialized ? 200 : 503, { ok: dbOk && initialized, storage: Store.storageKind(), db: dbOk, initialized });
+  }
+  if (req.method === 'GET' && route === '/api/db') {
+    return readData(['products', 'settings'], () => send(res, 200, publicDB()));
+  }
+  if (req.method === 'POST' && route === '/api/promo') {
+    await limit('promo:' + ip, 30, 10 * 60000, 'Слишком много попыток ввода промокода. Подождите 10 минут.');
+    return readData(['settings'], () => {
+      const c = NS.findPromo(body.code);
+      if (!c) throw fail(404, 'Промокод не найден или больше не действует');
+      return send(res, 200, { promo: publicPromo(c) });
     });
   }
-
-  if (req.method === 'POST' && route === '/api/promo') {
-    const c = NS.findPromo(body.code);
-    if (!c) throw fail(404, 'Промокод не найден или больше не действует');
-    return send(res, 200, { promo: publicPromo(c) });
+  if (req.method === 'POST' && route === '/api/orders') {
+    await limit('order:' + ip, 12, 60 * 60000, 'Слишком много заказов с одного устройства. Позвоните нам, и мы оформим заказ.');
+    const order = await writeData(['products', 'settings'], (state) => { state.newOrders = true; return createOrder(body); });
+    await afterOrder(order);
+    return send(res, 200, { order });
   }
-  if (req.method === 'POST' && route === '/api/orders') return send(res, 200, { order: createOrder(body) });
   if (req.method === 'POST' && route === '/api/subscribe') {
     const email = str(body.email, 120).toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw fail(400, 'Некорректный e-mail');
-    if (!db.subscribers.includes(email)) { db.subscribers.push(email); persist(); }
-    const welcome = NS.findPromo(db.settings.welcomeCode);
-    const code = welcome ? welcome.code : '';
+    await limit('sub:' + ip, 6, 60 * 60000);
+    const code = await writeData(['settings', 'subscribers'], () => {
+      if (!db.subscribers.includes(email)) db.subscribers.push(email);
+      const welcome = NS.findPromo(db.settings.welcomeCode);
+      return welcome ? welcome.code : '';
+    });
     let mailed = false;
     let mailError = '';
-    const st = Notify.status();
-    if (st.emailReady) {
-      try {
-        await sendWelcomeMail(email, code);
-        mailed = true;
-      } catch (e) {
-        mailError = e.message || 'Не удалось отправить письмо';
-        console.error('welcome mail', mailError);
+    await Notify.runWith(nctx, async () => {
+      const st = await Store.read(['notify']);
+      nctx.cfg = st.notify;
+      if (Notify.status().emailReady) {
+        try { await withTimeout(sendWelcomeMail(email, code), 8000); mailed = true; } catch (e) { mailError = 'Не удалось отправить письмо'; console.error('welcome mail', e.message); }
+      } else {
+        mailError = 'Почта не настроена: Админ → Настройки → Почта и SMS';
       }
-    } else {
-      mailError = 'Почта не настроена: Админ → Настройки → Почта и SMS';
-    }
-    Notify.notifyAdmin('Новая подписка: ' + email + (code ? (' · промокод ' + code) : '')).catch(() => {});
+      await withTimeout(Notify.notifyAdmin('Новая подписка: ' + email).catch(() => {}), 5000);
+      await flushNotify(nctx);
+    });
     return send(res, 200, { ok: true, code, mailed, mailError });
   }
 
   if (req.method === 'POST' && route === '/api/admin/login') {
-    const a = attempts.get(ip) || { n: 0, until: 0 };
-    if (a.until > Date.now()) throw fail(429, 'Слишком много попыток. Подождите 5 минут.');
-    if (!passwordOk(body.password || '')) {
-      a.n++;
-      if (a.n >= 8) { a.n = 0; a.until = Date.now() + 5 * 60000; }
-      attempts.set(ip, a);
-      await new Promise((r) => setTimeout(r, 500));
+    sessionSecret(); // в продакшене без SESSION_SECRET вход отключён
+    await limit('login-all', 60, 15 * 60000, 'Вход временно ограничен. Подождите 15 минут.');
+    await limit('login:' + ip, 8, 15 * 60000, 'Слишком много попыток. Подождите 15 минут.');
+    const token = await writeData(['auth'], () => {
+      ensureAuth();
+      if (!passwordOk(body.password || '')) return null;
+      return issueSession();
+    });
+    if (!token) {
+      await new Promise((r) => setTimeout(r, 600));
       throw fail(401, 'Неверный пароль');
     }
-    attempts.delete(ip);
-    return send(res, 200, { token: issueSession() });
+    await Store.clearHit('login:' + ip).catch(() => {});
+    return send(res, 200, { token });
   }
 
   if (!route.startsWith('/api/admin/')) throw fail(404, 'Не найдено');
-  if (!isAdmin(req)) throw fail(401, 'Требуется вход в админ-панель');
+
+  // ответ отправляется только после успешной записи (COMMIT)
+  const reply = (out) => { if (out !== undefined) send(res, 200, out); return out; };
+  const adminRead = async (parts, fn) => reply(await Notify.runWith(nctx, () => readData(parts.concat(['auth']), async (state) => {
+    await requireAdmin(req, state);
+    useNotify(state, nctx);
+    return fn(state);
+  })));
+  const adminWrite = async (parts, fn) => reply(await Notify.runWith(nctx, () => writeData(parts.concat(['auth']), async (state) => {
+    await requireAdmin(req, state);
+    useNotify(state, nctx);
+    return fn(state);
+  })));
 
   switch (req.method + ' ' + route) {
-    case 'GET /api/admin/db': return send(res, 200, Object.assign(adminDB(), { notify: Notify.status() }));
-    case 'GET /api/admin/notify': return send(res, 200, { notify: Notify.status(), outbox: Notify.readOutbox(40) });
-    case 'POST /api/admin/notify': {
-      const cur = Notify.loadCfg();
-      const next = body.notify || body;
-      if (next.email) {
-        if (next.email.pass === '' || next.email.pass == null) next.email.pass = cur.email.pass;
-        if (next.email.pass === '********') next.email.pass = cur.email.pass;
-      }
-      if (next.sms) {
-        if (next.sms.password === '' || next.sms.password == null) next.sms.password = cur.sms.password;
-        if (next.sms.password === '********') next.sms.password = cur.sms.password;
-        next.sms.token = cur.sms.token;
-        next.sms.tokenExpires = cur.sms.tokenExpires;
-      }
-      if (next.telegram) {
-        if (!next.telegram.botToken || next.telegram.botToken.indexOf('••••') === 0) next.telegram.botToken = cur.telegram.botToken;
-      }
-      const saved = Notify.saveCfg({
-        email: Object.assign({}, cur.email, next.email || {}),
-        sms: Object.assign({}, cur.sms, next.sms || {}),
-        telegram: Object.assign({}, cur.telegram, next.telegram || {}),
+    case 'GET /api/admin/db':
+      return adminRead(ADMIN_ALL, () => (Object.assign(adminDB(), { notify: Notify.status() })));
+    case 'GET /api/admin/health':
+      return adminRead([], async () => {
+        const s = await Store.summary(await Store.getClient());
+        return ({ storage: Store.storageKind(), production: IS_PROD, sessionSecret: (process.env.SESSION_SECRET || '').length >= 32, summary: s });
       });
-      return send(res, 200, { notify: Notify.status(), outbox: Notify.readOutbox(40) });
-    }
+    case 'GET /api/admin/notify':
+      return adminRead(['notify', 'outbox'], () => ({ notify: Notify.status(), outbox: Notify.readOutbox(40) }));
+    case 'POST /api/admin/notify':
+      return adminWrite(['notify', 'outbox'], (state) => {
+        const cur = Notify.loadCfg();
+        const next = body.notify || body;
+        if (next.email) {
+          if (next.email.pass === '' || next.email.pass == null) next.email.pass = cur.email.pass;
+          if (next.email.pass === '********') next.email.pass = cur.email.pass;
+        }
+        if (next.sms) {
+          if (next.sms.password === '' || next.sms.password == null) next.sms.password = cur.sms.password;
+          if (next.sms.password === '********') next.sms.password = cur.sms.password;
+          next.sms.token = cur.sms.token;
+          next.sms.tokenExpires = cur.sms.tokenExpires;
+        }
+        if (next.telegram) {
+          if (!next.telegram.botToken || next.telegram.botToken.indexOf('••••') === 0) next.telegram.botToken = cur.telegram.botToken;
+        }
+        state.notify = Notify.saveCfg({
+          email: Object.assign({}, cur.email, next.email || {}),
+          sms: Object.assign({}, cur.sms, next.sms || {}),
+          telegram: Object.assign({}, cur.telegram, next.telegram || {}),
+        });
+        nctx.cfgDirty = false;
+        return ({ notify: Notify.status(), outbox: Notify.readOutbox(40) });
+      });
     case 'POST /api/admin/notify-test': {
       const kind = str(body.kind, 20);
       const to = str(body.to, 120);
-      if (kind === 'email') {
-        if (!to) throw fail(400, 'Укажите e-mail для теста');
-        await Notify.sendEmail(to, 'Nargizka Shop — тест', 'Тестовое письмо от Nargizka Shop. Если вы его видите — SMTP настроен верно.');
-        return send(res, 200, { ok: true, outbox: Notify.readOutbox(40) });
-      }
-      if (kind === 'sms') {
-        if (!to) throw fail(400, 'Укажите телефон для теста');
-        await Notify.sendSmsSafe(to, 'Nargizka Shop: test SMS OK');
-        return send(res, 200, { ok: true, outbox: Notify.readOutbox(40) });
-      }
-      if (kind === 'telegram') {
-        await Notify.notifyAdmin('Nargizka Shop: тест Telegram OK');
-        return send(res, 200, { ok: true, outbox: Notify.readOutbox(40) });
-      }
-      throw fail(400, 'kind: email | sms | telegram');
+      await adminRead(['notify', 'outbox'], () => {});
+      await Notify.runWith(nctx, async () => {
+        try {
+          if (kind === 'email') {
+            if (!to) throw fail(400, 'Укажите e-mail для теста');
+            await Notify.sendEmail(to, 'Nargizka Shop — тест', 'Тестовое письмо от Nargizka Shop. Если вы его видите — SMTP настроен верно.');
+          } else if (kind === 'sms') {
+            if (!to) throw fail(400, 'Укажите телефон для теста');
+            await Notify.sendSmsSafe(to, 'Nargizka Shop: test SMS OK');
+          } else if (kind === 'telegram') {
+            await Notify.notifyAdmin('Nargizka Shop: тест Telegram OK');
+          } else throw fail(400, 'kind: email | sms | telegram');
+        } finally {
+          await flushNotify(nctx);
+        }
+      });
+      return send(res, 200, { ok: true, outbox: Notify.runWith(nctx, () => Notify.readOutbox(40)) });
     }
-    case 'POST /api/admin/save': adminSave(body); return send(res, 200, adminDB());
-    case 'POST /api/admin/order': setOrderStatus(body.id, body.status); return send(res, 200, adminDB());
+    case 'POST /api/admin/save':
+      return adminWrite(ADMIN_ALL, () => { adminSave(body); return (adminDB()); });
+    case 'POST /api/admin/order':
+      return adminWrite(ADMIN_ALL, () => { setOrderStatus(body.id, body.status); return (adminDB()); });
     case 'POST /api/admin/finance':
-      applyFinance(body);
-      return send(res, 200, adminDB());
+      return adminWrite(ADMIN_ALL, () => { applyFinance(body); return (adminDB()); });
     case 'POST /api/admin/store-sale':
-      return send(res, 200, Object.assign(adminDB(), { order: createStoreSale(body) }));
+      return adminWrite(ADMIN_ALL, () => (Object.assign(adminDB(), { order: createStoreSale(body) })));
     case 'POST /api/admin/stock-move':
-      return send(res, 200, Object.assign(adminDB(), { move: applyStockMove(body) }));
+      return adminWrite(ADMIN_ALL, () => (Object.assign(adminDB(), { move: applyStockMove(body) })));
     case 'POST /api/admin/order-delete':
-      db.orders = db.orders.filter((o) => o.id !== body.id);
-      persist();
-      return send(res, 200, adminDB());
-    case 'POST /api/admin/upload': return send(res, 200, { url: saveUpload(body.data) });
+      // заказ не стирается: копия остаётся в таблице deleted_rows
+      return adminWrite(ADMIN_ALL, () => {
+        if (!db.orders.some((o) => o.id === body.id)) throw fail(404, 'Заказ не найден');
+        db.orders = db.orders.filter((o) => o.id !== body.id);
+        current.db.orders = db.orders;
+        return (adminDB());
+      });
+    case 'POST /api/admin/upload':
+      await adminRead([], () => {});
+      return send(res, 200, { url: await saveUpload(body.data) });
     case 'POST /api/admin/password':
-      if (String(body.password || '').length < 6) throw fail(400, 'Пароль должен быть не короче 6 символов');
-      setPassword(body.password, false);
-      return send(res, 200, { ok: true });
+      return adminWrite(['auth'], () => {
+        if (String(body.password || '').length < MIN_PASSWORD) throw fail(400, 'Пароль должен быть не короче ' + MIN_PASSWORD + ' символов');
+        setPassword(body.password, false);
+        return ({ ok: true, token: issueSession() });
+      });
     case 'POST /api/admin/reset':
-      setDB(NS.seedDB());
-      persist();
-      return send(res, 200, adminDB());
-    case 'POST /api/admin/import': {
-      const d = body.db;
-      if (!d || !Array.isArray(d.products) || !d.settings) throw fail(400, 'Файл не похож на резервную копию Nargizka Shop');
-      d.products = d.products.map(sanitizeProduct);
-      setDB(d);
-      persist();
-      return send(res, 200, adminDB());
-    }
+      if (IS_PROD) throw fail(403, 'Сброс к демо-данным отключён в рабочем магазине — чтобы не потерять заказы.');
+      return adminWrite(ADMIN_ALL, (state) => {
+        state.extra.push(Store.snapshotStatement(state, 'before-reset'));
+        const fresh = NS.seedDB();
+        Object.assign(db, fresh);
+        bind(Object.assign(state, { db }));
+        return (adminDB());
+      });
+    case 'POST /api/admin/import':
+      return adminWrite(ADMIN_ALL, (state) => {
+        const d = body.db;
+        if (!d || !Array.isArray(d.products) || !d.settings) throw fail(400, 'Файл не похож на резервную копию Nargizka Shop');
+        state.extra.push(Store.snapshotStatement(state, 'before-import'));
+        const next = NS.migrate(JSON.parse(JSON.stringify(d)));
+        next.products = next.products.map(sanitizeProduct);
+        ['products', 'orders', 'subscribers', 'settings', 'finance', 'version'].forEach((k) => { db[k] = next[k]; });
+        bind(Object.assign(state, { db }));
+        return (adminDB());
+      });
     case 'POST /api/admin/logout':
       return send(res, 200, { ok: true });
     default: throw fail(404, 'Не найдено');
@@ -643,25 +852,21 @@ function serveStatic(req, res, urlPath) {
     return res.end();
   }
   const parts = urlPath.split('/').filter(Boolean);
-  if (parts[0] === 'data' || parts.some((p) => p.startsWith('.') || p.startsWith('_')) || /\.(tmp|md)$/i.test(urlPath) || urlPath === '/server.js') {
+  if (parts[0] === 'uploads') return serveUpload(res, parts.slice(1).join('/'));
+  if (['data', 'db', 'scripts', 'docs', 'node_modules', 'api'].includes(parts[0]) || parts.some((p) => p.startsWith('.') || p.startsWith('_'))
+    || /\.(tmp|md|sqlite|sqlite-wal|sqlite-shm|bundle)$/i.test(urlPath) || /^\/(server|storage|notify)\.js$/.test(urlPath) || urlPath === '/package.json' || urlPath === '/vercel.json') {
     res.writeHead(404); return res.end();
   }
   // Нельзя path.join(ROOT, '/...') — на POSIX второй абсолютный сегмент сбрасывает ROOT
   const rel = urlPath.replace(/^\/+/, '');
-  const base = parts[0] === 'uploads' ? ROOT : STATIC_ROOT;
+  const base = STATIC_ROOT;
   let file = path.normalize(path.join(base, rel));
   if (!file.startsWith(base)) { res.writeHead(403); return res.end(); }
   if (!rel || urlPath.endsWith('/')) file = path.join(file, 'index.html');
-  // uploads на Vercel лежат в /tmp
-  if (parts[0] === 'uploads') {
-    file = path.normalize(path.join(UPLOADS, parts.slice(1).join(path.sep)));
-    if (!file.startsWith(UPLOADS)) { res.writeHead(403); return res.end(); }
-  }
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('Не найдено'); }
     const ext = path.extname(file).toLowerCase();
-    const headers = { 'Content-Type': TYPES[ext] || 'application/octet-stream' };
-    headers['Cache-Control'] = parts[0] === 'uploads' ? 'public, max-age=31536000, immutable' : 'no-cache';
+    const headers = Object.assign({ 'Content-Type': TYPES[ext] || 'application/octet-stream', 'Cache-Control': 'no-cache' }, SECURITY_HEADERS);
     res.writeHead(200, headers);
     res.end(data);
   });
@@ -677,9 +882,19 @@ function resolveUrlPath(req) {
     q.delete('__path');
     const rest = q.toString();
     req.url = viaQuery + (rest ? '?' + rest : '');
-    return decodeURIComponent(viaQuery.split('?')[0] || '/');
+    try { return decodeURIComponent(viaQuery.split('?')[0] || '/'); } catch (_) { return null; }
   }
-  return decodeURIComponent(parsed.pathname || '/');
+  try { return decodeURIComponent(parsed.pathname || '/'); } catch (_) { return null; }
+}
+
+function handleError(res, e) {
+  if (e && e.isDbError) {
+    console.error('db error:', e.code, e.message);
+    return send(res, 503, { error: 'База данных временно недоступна. Попробуйте через минуту.' });
+  }
+  if (!e.status) console.error(e);
+  const extra = e.retryAfter ? { 'Retry-After': String(e.retryAfter) } : undefined;
+  return send(res, e.status || 500, { error: e.status ? e.message : 'Внутренняя ошибка сервера' }, extra);
 }
 
 function requestListener(req, res) {
@@ -687,18 +902,17 @@ function requestListener(req, res) {
   if (!urlPath) { res.writeHead(400); return res.end(); }
   if (urlPath === '/api' || urlPath.startsWith('/api/')) {
     api(req, res, urlPath === '/api' ? '/api/' : urlPath).catch((e) => {
-      if (!e.status) console.error(e);
-      if (!res.headersSent) send(res, e.status || 500, { error: e.status ? e.message : 'Внутренняя ошибка сервера' });
+      if (!res.headersSent) handleError(res, e);
     });
     return;
   }
-  serveStatic(req, res, urlPath);
+  Promise.resolve(serveStatic(req, res, urlPath)).catch((e) => { if (!res.headersSent) handleError(res, e); });
 }
 
 if (require.main === module && !ON_VERCEL) {
   http.createServer(requestListener).listen(PORT, () => {
-    console.log('Nargizka Shop:  http://localhost:' + PORT);
-    console.log('Админ-панель:   http://localhost:' + PORT + '/admin/' + (auth.isDefault ? '  (пароль по умолчанию: admin — смените его в настройках)' : ''));
+    console.log('Nargizka Shop:  http://localhost:' + PORT + '  (хранилище: ' + Store.storageKind() + ')');
+    console.log('Админ-панель:   http://localhost:' + PORT + '/admin/' + (process.env.ADMIN_PASSWORD ? '' : '  (локально, пока пароль не сменён: admin)'));
   });
 }
 

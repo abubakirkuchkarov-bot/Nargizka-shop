@@ -727,7 +727,7 @@
       renderImgs();
       for (const file of files) {
         try {
-          const data = await resizeImage(file, 2400);
+          const data = await resizeImage(file, 2000);
           const r = await NS.api('/api/admin/upload', { data });
           if (draft === p) p.images.push(r.url);
         } catch (err) {
@@ -765,7 +765,7 @@
       ctx.fillStyle = '#fff';
       ctx.fillRect(0, 0, c.width, c.height);
       paint(ctx, c.width, c.height);
-      return c.toDataURL('image/jpeg', 0.9);
+      return c.toDataURL('image/jpeg', 0.86);
     };
     return new Promise((resolve, reject) => {
       const fail = () => reject(new Error('Не удалось прочитать изображение. Попробуйте другой файл или сохраните как JPG/PNG.'));
@@ -901,6 +901,12 @@
       </div>`);
   }
 
+  // защита от CSV-инъекций: значение, начинающееся с = + - @, Excel выполнил бы как формулу
+  function csvSafe(c) {
+    const v = String(c == null ? '' : c);
+    return typeof c !== 'number' && /^[=+\-@\t\r]/.test(v) ? "'" + v : v;
+  }
+
   function exportOrdersCSV() {
     const rows = [['Номер', 'Дата', 'Статус', 'Клиент', 'Телефон', 'E-mail', 'Город', 'Адрес', 'Доставка', 'Оплата', 'Товары', 'Сумма товаров', 'Скидка от суммы', 'Промокод', 'Скидка по промокоду', 'Доставка, сум', 'Итого, сум']];
     NS.db.orders.forEach((o) => rows.push([
@@ -908,7 +914,7 @@
       o.delivery, o.payment, o.items.map((i) => `${i.name} (${i.color}, ${i.size}) x${i.qty}`).join('; '),
       o.subtotal, o.autoDiscount || 0, o.promo, o.promoDiscount, o.shipping, o.total,
     ]));
-    const csv = rows.map((r) => r.map((c) => `"${String(c == null ? '' : c).replace(/"/g, '""')}"`).join(';')).join('\r\n');
+    const csv = rows.map((r) => r.map((c) => `"${csvSafe(c).replace(/"/g, '""')}"`).join(';')).join('\r\n');
     download('nargizka-orders.csv', '\ufeff' + csv, 'text/csv;charset=utf-8');
   }
 
@@ -1550,7 +1556,7 @@
         r.note,
       ]);
     });
-    const csv = '\ufeff' + lines.map((row) => row.map((c) => '"' + String(c).replace(/"/g, '""') + '"').join(';')).join('\r\n');
+    const csv = '\ufeff' + lines.map((row) => row.map((c) => '"' + csvSafe(c).replace(/"/g, '""') + '"').join(';')).join('\r\n');
     download('nargizka-finance.csv', csv, 'text/csv;charset=utf-8');
   }
 
@@ -1720,7 +1726,7 @@
         <div class="panel">
           <div class="panel__head"><h2>Пароль администратора</h2></div>
           <form id="passForm" class="form-grid">
-            <div class="field"><label>Новый пароль (от 6 символов)</label><input class="input" type="password" name="p1" autocomplete="new-password"></div>
+            <div class="field"><label>Новый пароль (от 8 символов)</label><input class="input" type="password" name="p1" autocomplete="new-password"></div>
             <div class="field"><label>Повторите пароль</label><input class="input" type="password" name="p2" autocomplete="new-password"></div>
             <div class="full form-actions" style="margin-top:0"><button class="btn btn--dark" type="submit">Сменить пароль</button></div>
           </form>
@@ -1737,7 +1743,7 @@
 
         <div class="panel">
           <div class="panel__head"><h2>Данные магазина</h2></div>
-          <p class="hint">Резервная копия товаров, заказов и настроек. Фото хранятся отдельно в папке uploads на сервере.</p>
+          <p class="hint">Резервная копия товаров, заказов и настроек. Фото хранятся в базе отдельно и в файл не входят.</p>
           <div style="display:flex;gap:10px;flex-wrap:wrap">
             <button class="btn btn--dark" data-export-db style="height:44px">Скачать резервную копию</button>
             <label class="btn btn--outline" style="height:44px;cursor:pointer">Загрузить копию<input type="file" accept="application/json" id="importDb" hidden></label>
@@ -2305,10 +2311,14 @@
         break;
       }
       case 'passForm': {
-        if (f.p1.value.length < 6) return toast('Пароль должен быть не короче 6 символов', 'error');
+        if (f.p1.value.length < 8) return toast('Пароль должен быть не короче 8 символов', 'error');
         if (f.p1.value !== f.p2.value) return toast('Пароли не совпадают', 'error');
         NS.api('/api/admin/password', { password: f.p1.value })
-          .then(() => { defaultPassword = false; updateWarn(); form.reset(); toast('Пароль изменён'); })
+          .then((r) => {
+            // после смены пароля старые сессии закрываются — сохраняем новый токен
+            if (r && r.token) { NS.token = r.token; localStorage.setItem(TOKEN_KEY, r.token); }
+            defaultPassword = false; updateWarn(); form.reset(); toast('Пароль изменён');
+          })
           .catch(onError);
         break;
       }
