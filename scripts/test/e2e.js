@@ -214,6 +214,11 @@ async function main() {
   r = await admin(B, '/api/admin/import', { db: backup });
   check('импорт резервной копии', r.status === 200 && r.json.db.products.length === backup.products.length);
 
+  r = await admin(A, '/api/admin/revoke-sessions', {});
+  check('«выйти на всех устройствах» выдаёт новый токен', r.status === 200 && r.json.token);
+  const prevTok = token; token = r.json.token;
+  check('старый токен после этого не работает', (await req(B, 'GET', '/api/admin/db', null, prevTok)).status === 401);
+  check('новый токен работает', (await req(B, 'GET', '/api/admin/db', null, token)).status === 200);
   console.log('\n# Защита от перебора');
   let codes = [];
   for (let i = 0; i < 9; i++) codes.push((await req(A, 'POST', '/api/admin/login', { password: 'wrong' + i })).status);

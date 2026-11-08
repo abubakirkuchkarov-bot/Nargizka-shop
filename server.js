@@ -839,6 +839,12 @@ async function api(req, res, route) {
         bind(Object.assign(state, { db }));
         return (adminDB());
       });
+    case 'POST /api/admin/revoke-sessions':
+      // «выйти на всех устройствах»: все выданные токены перестают действовать, текущему выдаётся новый
+      return adminWrite(['auth'], () => {
+        auth = Object.assign({}, auth, { epoch: (auth.epoch || 0) + 1 });
+        return ({ ok: true, token: issueSession() });
+      });
     case 'POST /api/admin/logout':
       return send(res, 200, { ok: true });
     default: throw fail(404, 'Не найдено');
