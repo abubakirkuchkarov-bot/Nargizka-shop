@@ -57,9 +57,12 @@ let rev = 0;
 let auth = null;
 let current = null;
 function persist() { /* изменения записывает db/store.js после обработчика */ }
+// название магазина для писем и SMS (обновляется при каждой загрузке настроек)
+let BRAND = NS.defaultBrand();
 function bind(state) {
   current = state;
   db = NS.migrate(state.db);
+  if (state.parts.has('settings')) BRAND = db.settings.brand;
   state.db = db;
   NS.db = db;
   rev = state.rev;
@@ -71,7 +74,7 @@ function exclusive(fn) {
   queue = run.catch(() => {});
   return run;
 }
-const ALL_PARTS = ['products', 'settings', 'orders', 'finance', 'subscribers', 'auth'];
+const ALL_PARTS = ['products', 'settings', 'orders', 'finance', 'subscribers', 'auth', 'moves'];
 
 async function readData(parts, fn) {
   await ensureReady();
@@ -237,7 +240,13 @@ function publicDB() {
   const settings = Object.assign({}, db.settings);
   const welcome = NS.findPromo(settings.welcomeCode);
   settings.promoCodes = welcome ? [publicPromo(welcome)] : [];
-  return { rev, db: { version: db.version, products: db.products.filter((p) => p.visible), settings, orders: [], subscribers: [] } };
+  // закупочная цена и служебные поля — только для админки
+  const products = db.products.filter((p) => p.visible).map((p) => {
+    const x = Object.assign({}, p);
+    delete x.cost;
+    return x;
+  });
+  return { rev, db: { version: db.version, products, settings, orders: [], subscribers: [] } };
 }
 function adminDB() {
   return { rev, db, defaultPassword: !!(auth && auth.isDefault) };
@@ -251,24 +260,33 @@ function sanitizeImage(src) {
   const s = str(src, 2000);
   return /^(\/uploads\/[\w.-]+|https?:\/\/\S+)$/i.test(s) ? s : null;
 }
+const colorName = (c) => str(c, 40).replace(/\|/g, '/');
+function sanitizeVstock(v) {
+  const out = {};
+  if (!v || typeof v !== 'object') return out;
+  Object.keys(v).slice(0, 2000).forEach((k) => {
+    const [c, sz] = NS.splitKey(String(k));
+    const size = str(sz, 16);
+    if (!size) return;
+    out[NS.vkey(colorName(c), size)] = int(v[k], 0, 100000);
+  });
+  return out;
+}
 function sanitizeProduct(p) {
-  const stock = {};
-  activeSizes().forEach((s) => { stock[s] = int(p.stock && p.stock[s], 0, 100000); });
-  if (p.stock && typeof p.stock === 'object') {
-    Object.keys(p.stock).forEach((k) => {
-      const key = str(k, 16);
-      if (key && !(key in stock)) stock[key] = int(p.stock[k], 0, 100000);
-    });
-  }
-  return {
+  const colors = (Array.isArray(p.colors) ? p.colors : []).map(colorName).filter(Boolean).slice(0, 40);
+  // старый формат (остаток только по размерам) переводится в варианты
+  const tmp = NS.normalizeStock({ colors, vstock: p.vstock ? sanitizeVstock(p.vstock) : null, stock: p.stock || {} }, activeSizes());
+  const out = {
     id: str(p.id, 40) || NS.newId('p'),
     sku: str(p.sku, 40),
     name: str(p.name, 200),
+    brand: str(p.brand, 80),
     category: str(p.category, 40),
     price: int(p.price, 0, 1e12),
+    cost: int(p.cost, 0, 1e12),
     discount: int(p.discount, 0, 90),
-    colors: (Array.isArray(p.colors) ? p.colors : []).map((c) => str(c, 40)).filter(Boolean).slice(0, 40),
-    stock,
+    colors,
+    vstock: tmp.vstock,
     variant: int(p.variant, 0, 3),
     fabric: str(p.fabric, 60),
     description: str(p.description, 4000),
@@ -281,15 +299,59 @@ function sanitizeProduct(p) {
     reviews: int(p.reviews, 0, 1e9),
     createdAt: +p.createdAt || Date.now(),
   };
+  return NS.normalizeStock(out, activeSizes());
 }
 
-function moveStock(order, sign) {
-  order.items.forEach((it) => {
-    const p = db.products.find((x) => x.id === it.id);
-    if (!p) return;
-    p.stock[it.size] = Math.max(0, (+p.stock[it.size] || 0) + sign * it.qty);
-    p.sold = Math.max(0, (p.sold || 0) - sign * it.qty);
+/* ---------- склад: каждое изменение остатка проходит здесь и пишется в журнал ---------- */
+const MOVE_TYPES = {
+  sale: 'Продажа', cancel: 'Отмена заказа', return: 'Возврат', receipt: 'Поступление',
+  writeoff: 'Списание', adjust: 'Корректировка', initial: 'Начальный остаток', restock: 'Повторное списание',
+};
+function variantKey(p, color) {
+  return (p.colors || []).length ? color : '';
+}
+function changeStock(p, color, size, delta, type, reason, ref, unitCost) {
+  delta = Math.round(+delta || 0);
+  if (!delta) return;
+  const key = NS.vkey(variantKey(p, color), size);
+  const cur = +(p.vstock || {})[key] || 0;
+  const next = cur + delta;
+  if (next < 0) throw fail(409, `${p.name} (${[variantKey(p, color), size].filter(Boolean).join(', ')}): в наличии только ${cur} шт.`);
+  if (!p.vstock) p.vstock = {};
+  p.vstock[key] = next;
+  NS.normalizeStock(p, activeSizes());
+  const m = {
+    at: Date.now(), productId: p.id, productName: p.name, variant: key, delta, qtyAfter: next,
+    type, reason: str(reason, 300), ref: str(ref, 60), unitCost: unitCost == null ? null : Math.round(+unitCost || 0),
+  };
+  current.extra.push({
+    sql: 'INSERT INTO stock_moves(at, product_id, product_name, variant, delta, qty_after, type, reason, ref, unit_cost) VALUES (?,?,?,?,?,?,?,?,?,?)',
+    args: [m.at, m.productId, m.productName, m.variant, m.delta, m.qtyAfter, m.type, m.reason, m.ref, m.unitCost],
   });
+  if (Array.isArray(db.stockMoves)) db.stockMoves.unshift(m);
+}
+/**
+ * Заказ держит товар (stockOut = true) или вернул его на склад (false).
+ * Переход выполняется только при смене состояния — повторный вызов ничего не делает,
+ * поэтому двойное списание или двойной возврат невозможны.
+ */
+function applyOrderStock(o, out, nextStatus) {
+  if (!!o.stockOut === !!out) return;
+  const type = out ? (o.stockOut === false && o.status && NS.STOCK_FREE_STATUSES.includes(o.status) ? 'restock' : 'sale')
+    : (nextStatus === 'Возврат' ? 'return' : 'cancel');
+  const reason = MOVE_TYPES[type] + ' · заказ ' + o.id;
+  o.items.forEach((it) => {
+    const p = db.products.find((x) => x.id === it.id);
+    if (!p) return; // товар удалён из каталога — его копия в архиве
+    changeStock(p, it.color, it.size, out ? -it.qty : it.qty, type, reason, o.id, it.cost);
+    p.sold = Math.max(0, (p.sold || 0) + (out ? it.qty : -it.qty));
+  });
+  o.stockOut = !!out;
+}
+function historyPush(o, text) {
+  if (!Array.isArray(o.history)) o.history = [];
+  o.history.push({ at: Date.now(), text: str(text, 200) });
+  if (o.history.length > 50) o.history = o.history.slice(-50);
 }
 
 /* ---------- заказ с витрины: цены и остатки проверяются на сервере ---------- */
@@ -298,15 +360,15 @@ function moneyUz(n) {
   return new Intl.NumberFormat('ru-RU').format(+n || 0) + ' сум';
 }
 async function sendWelcomeMail(email, code) {
-  const subject = 'Nargizka Shop — ваш промокод';
+  const subject = BRAND.name + ' — ваш промокод';
   const text = code
-    ? ('Спасибо за подписку!\n\nВаш промокод на первый заказ: ' + code + '\n\nПримените его в корзине на сайте.\n\n— Nargizka Shop')
-    : ('Спасибо за подписку на новости Nargizka Shop!\n\n— Nargizka Shop');
+    ? ('Спасибо за подписку!\n\nВаш промокод на первый заказ: ' + code + '\n\nПримените его в корзине на сайте.\n\n— ' + BRAND.name)
+    : ('Спасибо за подписку на новости ' + BRAND.name + '!\n\n— ' + BRAND.name);
   const html = '<div style="font-family:Georgia,serif;line-height:1.5;color:#111">'
-    + '<h2 style="font-weight:400">Nargizka Shop</h2>'
+    + '<h2 style="font-weight:400">' + BRAND.name + '</h2>'
     + '<p>Спасибо за подписку!</p>'
     + (code ? ('<p>Ваш промокод на первый заказ:</p><p style="font-size:28px;letter-spacing:.12em"><b>' + code + '</b></p><p>Примените его в корзине на сайте.</p>') : '')
-    + '<p style="color:#706a62">— Nargizka Shop</p></div>';
+    + '<p style="color:#706a62">— ' + BRAND.name + '</p></div>';
   await Notify.sendEmail(email, subject, text, html);
 }
 async function sendOrderMail(order) {
@@ -316,17 +378,17 @@ async function sendOrderMail(order) {
     + items + '\n\nИтого: ' + moneyUz(order.total)
     + '\nДоставка: ' + (order.delivery || '')
     + '\nОплата: ' + (order.payment || '')
-    + '\n\nМы свяжемся с вами для подтверждения.\n— Nargizka Shop';
+    + '\n\nМы свяжемся с вами для подтверждения.\n— ' + BRAND.name;
   const html = '<div style="font-family:Georgia,serif;line-height:1.5"><h2 style="font-weight:400">Заказ ' + order.id + '</h2>'
     + '<p>Спасибо! Заказ принят.</p><pre style="font-family:inherit">' + items.replace(/</g, '') + '</pre>'
     + '<p><b>Итого: ' + moneyUz(order.total) + '</b></p>'
     + '<p>Доставка: ' + (order.delivery || '') + '<br>Оплата: ' + (order.payment || '') + '</p>'
     + '<p style="color:#706a62">Мы свяжемся с вами для подтверждения.</p></div>';
-  await Notify.sendEmail(order.customer.email, 'Nargizka Shop — заказ ' + order.id, text, html);
+  await Notify.sendEmail(order.customer.email, BRAND.name + ' — заказ ' + order.id, text, html);
 }
 async function sendOrderSms(order) {
   if (!order.customer || !order.customer.phone) return;
-  const text = 'Nargizka: zakaz ' + order.id + ' qabul qilindi. Jami: ' + Math.round(order.total) + " so'm. Tez orada bog'lanamiz.";
+  const text = BRAND.short + ': zakaz ' + order.id + ' qabul qilindi. Jami: ' + Math.round(order.total) + " so'm. Tez orada bog'lanamiz.";
   await Notify.sendSmsSafe(order.customer.phone, text);
 }
 
@@ -360,10 +422,12 @@ function createOrder(b) {
     const p = db.products.find((x) => x.id === it.id && x.visible);
     if (!p) throw fail(409, 'Один из товаров снят с продажи. Обновите корзину.');
     if (!activeSizes().includes(it.size) && !(it.size in (p.stock || {}))) throw fail(400, 'Некорректный размер');
-    const color = p.colors.includes(it.color) ? it.color : p.colors[0];
-    const k = p.id + '|' + it.size;
-    need[k] = (need[k] || 0) + it.qty;
-    if (need[k] > (+p.stock[it.size] || 0)) throw fail(409, `${p.name} (${it.size}): в наличии только ${+p.stock[it.size] || 0} шт.`);
+    if (p.colors.length && !p.colors.includes(it.color)) throw fail(409, `${p.name}: цвет «${it.color}» больше недоступен. Обновите корзину.`);
+    const color = p.colors.length ? it.color : '';
+    const k = NS.vkey(color, it.size);
+    const have = NS.variantStock(p, color, it.size);
+    need[p.id + '#' + k] = (need[p.id + '#' + k] || 0) + it.qty;
+    if (need[p.id + '#' + k] > have) throw fail(409, `${p.name} (${[color, it.size].filter(Boolean).join(', ')}): в наличии только ${have} шт.`);
     lines.push({ p, qty: it.qty, color, size: it.size });
   }
   if (!lines.length) throw fail(400, 'Корзина пуста');
@@ -382,7 +446,7 @@ function createOrder(b) {
     id, date: Date.now(), customer,
     delivery: DELIVERY[delivery],
     payment: NS.PAYMENTS[payKey].name,
-    items: lines.map((l) => ({ id: l.p.id, name: l.p.name, color: l.color, size: l.size, qty: l.qty, price: NS.finalPrice(l.p) })),
+    items: lines.map((l) => ({ id: l.p.id, name: l.p.name, sku: l.p.sku, color: l.color, size: l.size, qty: l.qty, price: NS.finalPrice(l.p), cost: +l.p.cost || 0 })),
     subtotal: t.subtotal,
     autoDiscount: t.autoDiscount,
     promo: t.code ? t.code.code : '',
@@ -390,8 +454,14 @@ function createOrder(b) {
     shipping: t.shipping,
     total: t.total,
     status: 'Новый',
+    channel: 'online',
+    paid: false,
+    paidAt: 0,
+    refunded: false,
+    stockOut: false,
   };
-  moveStock(order, -1);
+  applyOrderStock(order, true);
+  historyPush(order, 'Заказ оформлен на сайте');
   if (promo) promo.used = (promo.used || 0) + 1;
   db.orders.unshift(order);
   persist();
@@ -427,20 +497,53 @@ function applyFinance(body) {
   persist();
 }
 
+function sanitizeBrand(b) {
+  const d = NS.defaultBrand();
+  const x = Object.assign({}, d, b || {});
+  const out = {};
+  Object.keys(d).forEach((k) => { out[k] = str(x[k], k === 'tagline' ? 160 : 300).replace(/[<>]/g, ''); });
+  out.name = out.name || d.name;
+  out.short = out.short || out.name;
+  out.logoUrl = sanitizeImage(out.logoUrl) || (/^\/uploads\/[\w.-]+$/.test(out.logoUrl) ? out.logoUrl : '');
+  ['accent', 'dark'].forEach((k) => { if (!/^#[0-9a-f]{6}$/i.test(out[k])) out[k] = ''; });
+  ['mapUrl', 'facebook', 'tiktok', 'youtube'].forEach((k) => { if (out[k] && !/^https:\/\/\S+$/i.test(out[k])) out[k] = ''; });
+  return out;
+}
+
 function adminSave(b) {
   (Array.isArray(b.upserts) ? b.upserts : []).forEach((u) => {
     if (!u || !u.p) return;
     const next = sanitizeProduct(u.p);
     const idx = db.products.findIndex((x) => x.id === next.id);
+    const target = next.vstock;
     if (idx < 0) {
+      // новый товар: начальный остаток проходит через журнал склада
+      next.vstock = {};
+      NS.normalizeStock(next, activeSizes());
+      next.sold = 0;
       db.products.splice(int(u.index, 0, db.products.length), 0, next);
+      Object.keys(target).forEach((k) => {
+        const [c, sz] = NS.splitKey(k);
+        if (target[k] > 0) changeStock(next, c, sz, target[k], 'initial', 'Начальный остаток при создании товара', '', next.cost || null);
+      });
       return;
     }
     const old = db.products[idx];
-    // остатки меняются и заказами; если администратор их не трогал — оставляем серверные
-    if (u.base && JSON.stringify(u.base.stock) === JSON.stringify(u.p.stock)) next.stock = old.stock;
     next.sold = old.sold;
+    // остатки меняются и заказами; если администратор их не трогал — оставляем серверные
+    const baseV = u.base ? JSON.stringify(sanitizeProduct(u.base).vstock) : null;
+    next.vstock = Object.assign({}, old.vstock);
+    NS.normalizeStock(next, activeSizes());
     db.products[idx] = next;
+    if (baseV !== JSON.stringify(target)) {
+      const reason = str(u.reason, 300) || 'Правка остатка в карточке товара';
+      new Set(Object.keys(target).concat(Object.keys(old.vstock || {}))).forEach((k) => {
+        if (!(k in target)) return;
+        const [c, sz] = NS.splitKey(k);
+        const delta = (target[k] || 0) - (+next.vstock[k] || 0);
+        if (delta) changeStock(next, c, sz, delta, 'adjust', reason, '', null);
+      });
+    }
   });
   const del = new Set(Array.isArray(b.deletes) ? b.deletes : []);
   if (del.size) db.products = db.products.filter((p) => !del.has(p.id));
@@ -450,6 +553,7 @@ function adminSave(b) {
     const next = NS.migrate({ settings: b.settings }).settings;
     next.promoCodes.forEach((c) => { c.used = used[c.code] || 0; });
     next.usdRate = Math.max(1, +next.usdRate || 12700);
+    next.brand = sanitizeBrand(next.brand);
     next.returnDays = int(next.returnDays, 0, 365);
     db.settings = next;
   }
@@ -461,19 +565,35 @@ function setOrderStatus(id, status) {
   const o = db.orders.find((x) => x.id === id);
   if (!o) throw fail(404, 'Заказ не найден');
   if (!NS.ORDER_STATUSES.includes(status)) throw fail(400, 'Неизвестный статус');
-  const was = o.status === 'Отменён';
-  const now = status === 'Отменён';
-  if (was !== now) moveStock(o, now ? 1 : -1);
+  if (o.status === status) return o;
+  const holds = !NS.STOCK_FREE_STATUSES.includes(status);
+  applyOrderStock(o, holds, status);
+  // отмена или возврат оплаченного заказа = деньги возвращены покупателю
+  if (!holds && o.paid && !o.refunded) { o.refunded = true; o.refundedAt = Date.now(); }
+  if (holds && o.refunded) { o.refunded = false; o.refundedAt = 0; }
+  historyPush(o, 'Статус: ' + o.status + ' → ' + status);
   o.status = status;
-  persist();
+  return o;
+}
+function setOrderPaid(id, paid) {
+  const o = db.orders.find((x) => x.id === id);
+  if (!o) throw fail(404, 'Заказ не найден');
+  paid = !!paid;
+  if (o.paid === paid) return o;
+  if (paid && NS.STOCK_FREE_STATUSES.includes(o.status)) throw fail(409, 'Заказ отменён или возвращён — сначала верните ему рабочий статус');
+  o.paid = paid;
+  o.paidAt = paid ? Date.now() : 0;
+  if (!paid) { o.refunded = false; o.refundedAt = 0; }
+  historyPush(o, paid ? 'Отмечен как оплаченный' : 'Оплата снята (исправление)');
+  return o;
 }
 
 /** Продажа с витрины магазина: сразу списывает склад и попадает в кассу как доставленный заказ */
+/** Продажа в магазине или заказ по телефону, оформленный администратором */
 function createStoreSale(b) {
   const itemsIn = Array.isArray(b.items) ? b.items : [];
   if (!itemsIn.length) throw fail(400, 'Добавьте хотя бы один товар');
   const lines = [];
-  const need = {};
   itemsIn.slice(0, 40).forEach((it) => {
     const p = db.products.find((x) => x.id === str(it.id, 40));
     if (!p) throw fail(404, 'Товар не найден');
@@ -481,87 +601,106 @@ function createStoreSale(b) {
     const qty = int(it.qty, 1, 100);
     if (!size) throw fail(400, 'Укажите размер');
     if (!(size in (p.stock || {})) && !activeSizes().includes(size)) throw fail(400, 'Некорректный размер: ' + size);
-    const color = p.colors && p.colors.includes(str(it.color, 40)) ? str(it.color, 40) : (p.colors && p.colors[0]) || '';
-    const price = Math.max(0, Math.round(+it.price || NS.finalPrice(p)));
-    const k = p.id + '|' + size;
-    need[k] = (need[k] || 0) + qty;
-    if (need[k] > (+p.stock[size] || 0)) throw fail(409, p.name + ' (' + size + '): на складе только ' + (+p.stock[size] || 0) + ' шт.');
+    let color = colorName(it.color);
+    if (p.colors.length && !p.colors.includes(color)) color = NS.colorWithSize(p, size);
+    if (!p.colors.length) color = '';
+    const price = Math.max(0, Math.round(it.price != null && it.price !== '' ? +it.price : NS.finalPrice(p)));
     lines.push({ p, size, qty, color, price });
   });
-  const payName = str(b.payment, 60) || 'Наличные в магазине';
+  const channel = b.channel === 'phone' ? 'phone' : 'store';
+  const status = NS.ORDER_STATUSES.includes(b.status) && !NS.STOCK_FREE_STATUSES.includes(b.status) ? b.status : (channel === 'store' ? 'Доставлен' : 'Подтверждён');
+  const paid = b.paid === undefined ? channel === 'store' : !!b.paid;
+  const payName = str(b.payment, 60) || (channel === 'store' ? 'Наличные в магазине' : 'При получении');
   const note = str(b.note, 300);
-  const total = lines.reduce((s, l) => s + l.price * l.qty, 0);
+  const discount = int(b.discount, 0, 1e12);
+  const subtotal = lines.reduce((s, l) => s + l.price * l.qty, 0);
+  const shipping = channel === 'phone' ? int(b.shipping, 0, 1e9) : 0;
+  const total = Math.max(0, subtotal - discount) + shipping;
   let id;
-  do { id = 'MS-' + crypto.randomInt(100000, 999999); } while (db.orders.some((o) => o.id === id));
+  do { id = (channel === 'store' ? 'MS-' : 'TL-') + crypto.randomInt(100000, 999999); } while (db.orders.some((o) => o.id === id));
+  const date = +b.date && +b.date <= Date.now() + 60000 ? +b.date : Date.now();
   const order = {
     id,
-    date: +b.date || Date.now(),
-    channel: 'store',
+    date,
+    channel,
     customer: {
-      name: str(b.customerName, 80) || 'Покупатель в магазине',
+      name: str(b.customerName, 80) || (channel === 'store' ? 'Покупатель в магазине' : 'Покупатель'),
       phone: str(b.customerPhone, 40) || '—',
       email: '',
-      city: 'Ташкент',
-      address: 'Магазин (витрина)',
+      city: str(b.city, 80) || (channel === 'store' ? (db.settings.brand && db.settings.brand.city) || '' : ''),
+      address: channel === 'store' ? 'Магазин' : str(b.address, 300),
       comment: note,
     },
-    delivery: 'Магазин (витрина)',
+    delivery: channel === 'store' ? 'Магазин' : 'Курьер',
     payment: payName,
-    items: lines.map((l) => ({ id: l.p.id, name: l.p.name, color: l.color, size: l.size, qty: l.qty, price: l.price })),
-    subtotal: total,
+    items: lines.map((l) => ({ id: l.p.id, name: l.p.name, sku: l.p.sku, color: l.color, size: l.size, qty: l.qty, price: l.price, cost: +l.p.cost || 0 })),
+    subtotal,
     autoDiscount: 0,
     promo: '',
-    promoDiscount: 0,
-    shipping: 0,
+    promoDiscount: discount,
+    shipping,
     total,
-    status: 'Доставлен',
+    status,
+    paid,
+    paidAt: paid ? date : 0,
+    refunded: false,
+    stockOut: false,
   };
-  moveStock(order, -1);
+  applyOrderStock(order, true);
+  historyPush(order, channel === 'store' ? 'Продажа в магазине' : 'Заказ оформлен администратором');
   db.orders.unshift(order);
-  persist();
   return order;
 }
 
 /** Приход / списание склада без онлайн-заказа */
+/**
+ * Поступление / списание / корректировка склада.
+ * b.mode: 'in' (поступление, qty > 0), 'out' (списание), 'set' (установить точный остаток).
+ * b.lines: [{ productId, color, size, qty }] — несколько вариантов за одну операцию, всё или ничего.
+ * Старый формат (productId, size, qty, cost) тоже принимается.
+ */
 function applyStockMove(b) {
-  const mode = b.mode === 'out' ? 'out' : 'in';
-  const p = db.products.find((x) => x.id === str(b.productId, 40));
-  if (!p) throw fail(404, 'Товар не найден');
-  if (!p.stock) p.stock = {};
-  const size = str(b.size, 16);
-  const qty = int(b.qty, 1, 100000);
-  if (!size) throw fail(400, 'Укажите размер');
-  if (mode === 'out' && qty > (+p.stock[size] || 0)) {
-    throw fail(409, 'Нельзя списать больше, чем есть: ' + (+p.stock[size] || 0) + ' шт.');
-  }
-  p.stock[size] = Math.max(0, (+p.stock[size] || 0) + (mode === 'in' ? qty : -qty));
-  const cost = Math.max(0, Math.round(+b.cost || 0));
-  if (mode === 'in' && cost > 0) {
+  const mode = ['in', 'out', 'set'].includes(b.mode) ? b.mode : 'in';
+  const reason = str(b.reason || b.note, 300);
+  if (mode !== 'in' && reason.length < 3) throw fail(400, 'Укажите причину списания или корректировки');
+  let lines = Array.isArray(b.lines) ? b.lines : [{ productId: b.productId, color: b.color, size: b.size, qty: b.qty }];
+  lines = lines.slice(0, 500).map((l) => ({ productId: str(l.productId || b.productId, 40), color: colorName(l.color), size: str(l.size, 16), qty: int(l.qty, 0, 100000) }))
+    .filter((l) => l.size && (mode === 'set' || l.qty > 0));
+  if (!lines.length) throw fail(400, 'Укажите количество хотя бы для одного размера');
+  let unitCost = b.unitCost != null && b.unitCost !== '' ? int(b.unitCost, 0, 1e12) : null;
+  const totalQty = lines.reduce((s, l) => s + l.qty, 0);
+  if (unitCost == null && +b.cost > 0 && totalQty > 0) unitCost = Math.round(+b.cost / totalQty); // старый формат: сумма закупки
+  const type = mode === 'in' ? 'receipt' : mode === 'out' ? 'writeoff' : 'adjust';
+  const touched = new Map();
+  let moved = 0;
+  lines.forEach((l) => {
+    const p = db.products.find((x) => x.id === l.productId);
+    if (!p) throw fail(404, 'Товар не найден');
+    if (p.colors.length && !p.colors.includes(l.color)) l.color = p.colors[0];
+    const cur = NS.variantStock(p, variantKey(p, l.color), l.size);
+    const delta = mode === 'in' ? l.qty : mode === 'out' ? -l.qty : l.qty - cur;
+    changeStock(p, l.color, l.size, delta, type, reason || MOVE_TYPES[type], str(b.ref, 60), mode === 'in' ? unitCost : null);
+    moved += Math.abs(delta);
+    touched.set(p.id, p);
+  });
+  if (mode === 'in' && unitCost > 0 && b.updateCost !== false) touched.forEach((p) => { p.cost = unitCost; });
+  const sum = mode === 'in' && unitCost > 0 ? unitCost * totalQty : 0;
+  if (sum > 0 && b.recordExpense !== false) {
     if (!db.finance) db.finance = { openingBalance: 0, entries: [] };
+    const names = [...touched.values()].map((p) => p.name).join(', ');
     db.finance.entries.unshift({
-      id: NS.newId('f'),
-      date: Date.now(),
-      type: 'out',
-      category: 'Закупка товара',
-      amount: cost,
-      note: 'Приход на склад: ' + p.name + ' · ' + size + ' ×' + qty + (b.note ? ' · ' + str(b.note, 200) : ''),
-      createdAt: Date.now(),
+      id: NS.newId('f'), date: Date.now(), type: 'out', category: NS.PURCHASE_CATEGORY, amount: sum,
+      note: 'Поступление: ' + names + ' · ' + totalQty + ' шт. × ' + unitCost + (reason ? ' · ' + reason : ''), createdAt: Date.now(),
     });
   }
-  if (mode === 'out' && b.writeoffExpense && cost > 0) {
+  if (mode === 'out' && b.writeoffExpense && +b.cost > 0) {
     if (!db.finance) db.finance = { openingBalance: 0, entries: [] };
     db.finance.entries.unshift({
-      id: NS.newId('f'),
-      date: Date.now(),
-      type: 'out',
-      category: 'Прочее',
-      amount: cost,
-      note: 'Списание со склада: ' + p.name + ' · ' + size + ' ×' + qty + (b.note ? ' · ' + str(b.note, 200) : ''),
-      createdAt: Date.now(),
+      id: NS.newId('f'), date: Date.now(), type: 'out', category: 'Списание товара', amount: Math.round(+b.cost),
+      note: 'Списание: ' + reason, createdAt: Date.now(),
     });
   }
-  persist();
-  return { product: p, mode, size, qty };
+  return { mode, moved, products: [...touched.keys()] };
 }
 
 
@@ -779,12 +918,12 @@ async function api(req, res, route) {
         try {
           if (kind === 'email') {
             if (!to) throw fail(400, 'Укажите e-mail для теста');
-            await Notify.sendEmail(to, 'Nargizka Shop — тест', 'Тестовое письмо от Nargizka Shop. Если вы его видите — SMTP настроен верно.');
+            await Notify.sendEmail(to, BRAND.name + ' — тест', 'Тестовое письмо от ' + BRAND.name + '. Если вы его видите — SMTP настроен верно.');
           } else if (kind === 'sms') {
             if (!to) throw fail(400, 'Укажите телефон для теста');
-            await Notify.sendSmsSafe(to, 'Nargizka Shop: test SMS OK');
+            await Notify.sendSmsSafe(to, BRAND.name + ': test SMS OK');
           } else if (kind === 'telegram') {
-            await Notify.notifyAdmin('Nargizka Shop: тест Telegram OK');
+            await Notify.notifyAdmin(BRAND.name + ': тест Telegram OK');
           } else throw fail(400, 'kind: email | sms | telegram');
         } finally {
           await flushNotify(nctx);
@@ -796,6 +935,8 @@ async function api(req, res, route) {
       return adminWrite(ADMIN_ALL, () => { adminSave(body); return (adminDB()); });
     case 'POST /api/admin/order':
       return adminWrite(ADMIN_ALL, () => { setOrderStatus(body.id, body.status); return (adminDB()); });
+    case 'POST /api/admin/order-paid':
+      return adminWrite(ADMIN_ALL, () => { setOrderPaid(body.id, body.paid); return (adminDB()); });
     case 'POST /api/admin/finance':
       return adminWrite(ADMIN_ALL, () => { applyFinance(body); return (adminDB()); });
     case 'POST /api/admin/store-sale':
@@ -805,8 +946,11 @@ async function api(req, res, route) {
     case 'POST /api/admin/order-delete':
       // заказ не стирается: копия остаётся в таблице deleted_rows
       return adminWrite(ADMIN_ALL, () => {
-        if (!db.orders.some((o) => o.id === body.id)) throw fail(404, 'Заказ не найден');
-        db.orders = db.orders.filter((o) => o.id !== body.id);
+        const o = db.orders.find((x) => x.id === body.id);
+        if (!o) throw fail(404, 'Заказ не найден');
+        // удаляемый заказ, который держит товар, сначала возвращает его на склад
+        applyOrderStock(o, false, 'Отменён');
+        db.orders = db.orders.filter((x) => x.id !== body.id);
         current.db.orders = db.orders;
         return (adminDB());
       });
@@ -820,8 +964,8 @@ async function api(req, res, route) {
         return ({ ok: true, token: issueSession() });
       });
     case 'POST /api/admin/reset':
-      if (IS_PROD) throw fail(403, 'Сброс к демо-данным отключён в рабочем магазине — чтобы не потерять заказы.');
       return adminWrite(ADMIN_ALL, (state) => {
+        if (IS_PROD) throw fail(403, 'Сброс к демо-данным отключён в рабочем магазине — чтобы не потерять заказы.');
         state.extra.push(Store.snapshotStatement(state, 'before-reset'));
         const fresh = NS.seedDB();
         Object.assign(db, fresh);

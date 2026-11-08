@@ -32,7 +32,7 @@
       'btn.filters': 'Фильтры', 'btn.reset': 'Сбросить фильтры', 'btn.more': 'Показать ещё',
       'btn.confirm': 'Подтвердить заказ', 'btn.toCart': 'Применить к корзине',
       'hero.kicker': 'Новая коллекция · Осень 2026', 'hero.title1': 'Платья, в которых', 'hero.title2': 'вас запомнят',
-      'hero.sub': 'Более 50 моделей от коктейльных до свадебных. Сшито для женщин, которые выбирают лучшее.',
+      'hero.sub': 'Платья от коктейльных до свадебных. Сшито для женщин, которые выбирают лучшее.',
       'home.manifestoKicker': 'Maison Nargizka',
       'home.manifesto': 'Мы создаём платья для особенных моментов — от первого свидания до свадебного вальса. Благородные ткани, безупречная посадка и ручной контроль каждой модели перед тем, как она окажется у вас.',
       'home.statModels': 'моделей в наличии', 'home.statCats': 'коллекций', 'home.statColors': 'оттенков', 'home.statDays': 'дней на возврат',
@@ -43,7 +43,7 @@
       'home.justIn': 'Только что в бутике', 'home.seasonNew': 'Новинки сезона', 'home.buyersChoice': 'Выбор покупательниц',
       'home.bestsellers': 'Бестселлеры', 'home.perkShip': 'Бесплатная доставка', 'home.perkShipSub': 'При заказе от {sum}',
       'home.perkFit': 'Примерка перед оплатой', 'home.perkFitSub': 'Курьер подождёт 15 минут',
-      'home.perkRet': 'Возврат 14 дней', 'home.perkRetSub': 'Без лишних вопросов',
+      'home.perkRet': 'Возврат в течение {days}', 'home.perkRetSub': 'Без лишних вопросов',
       'home.perkQual': 'Премиальное качество', 'home.perkQualSub': 'Ручной контроль каждой модели',
       'home.club': 'Клуб Nargizka', 'home.clubTitle': '−10% на первый заказ',
       'home.clubText': 'Подпишитесь и первой узнавайте о новых коллекциях и закрытых распродажах.',
@@ -61,7 +61,7 @@
       'catalog.sortPriceAsc': 'Цена ↑', 'catalog.sortPriceDesc': 'Цена ↓',
       'catalog.saleOnly': 'Только со скидкой', 'catalog.inStock': 'Только в наличии',
       'catalog.size': 'Размер', 'catalog.color': 'Цвет', 'catalog.price': 'Цена', 'catalog.from': 'от', 'catalog.to': 'до',
-      'catalog.empty': 'Ничего не найдено', 'catalog.emptyHint': 'Попробуйте сбросить фильтры или выбрать другую категорию.',
+      'catalog.empty': 'Ничего не найдено', 'catalog.emptyHint': 'Попробуйте сбросить фильтры или выбрать другую категорию.', 'catalog.soon': 'Новая коллекция скоро появится', 'catalog.soonHint': 'Мы готовим каталог. Подпишитесь на новости или напишите нам — расскажем о новинках первыми.',
       'catalog.shown': 'Показано {n} из {total}',
       'crumbs.home': 'Главная', 'crumbs.catalog': 'Каталог',
       'product.color': 'Цвет', 'product.size': 'Размер', 'product.sizeNone': 'не выбран', 'product.qty': 'Количество',
@@ -70,7 +70,7 @@
       'product.bought': 'Купили {n} раз', 'product.save': 'Вы экономите {sum}', 'product.rate': 'по курсу {sum} за $1',
       'product.shipPerk': 'Бесплатная доставка от {sum}, по городу — 1–2 дня',
       'product.fitPerk': 'Примерка перед оплатой — курьер подождёт 15 минут',
-      'product.retPerk': 'Лёгкий возврат в течение 14 дней',
+      'product.retPerk': 'Лёгкий возврат в течение {days}',
       'product.lowStock': 'Осталось всего {n} шт.', 'product.inStock': 'В наличии', 'product.selectSize': 'Выберите размер',
       'checkout.title': 'Оформление заказа', 'checkout.contact': 'Контактные данные', 'checkout.delivery': 'Доставка',
       'checkout.pay': 'Оплата', 'checkout.name': 'Имя и фамилия', 'checkout.phone': 'Телефон', 'checkout.email': 'E-mail',
@@ -87,7 +87,7 @@
       'modal.sizesTitle': 'Таблица размеров', 'modal.deliveryTitle': 'Доставка и возврат',
       'modal.deliveryText1': 'Курьерская доставка — {ship}, бесплатно при заказе от {free}.',
       'modal.deliveryText2': 'Экспресс-доставка за 3 часа по городу — {express}.',
-      'modal.deliveryText3': 'Возврат возможен в течение 14 дней при сохранении бирок и товарного вида.',
+      'modal.deliveryText3': 'Возврат возможен в течение {days} при сохранении бирок и товарного вида.',
       'toast.subOk': 'Вы подписаны. Промокод уже в корзине.',
       'toast.subMailOk': 'Письмо отправлено на почту. Промокод {code} уже в корзине.',
       'toast.promoOk': 'Промокод применён', 'toast.promoBad': 'Промокод недействителен',
@@ -145,7 +145,7 @@
       'btn.filters': 'Filtrlar', 'btn.reset': 'Filtrlarni tozalash', 'btn.more': "Yana ko'rsatish",
       'btn.confirm': 'Buyurtmani tasdiqlash', 'btn.toCart': "Savatga qo'llash",
       'hero.kicker': 'Yangi kolleksiya · Kuz 2026', 'hero.title1': 'Sizni eslab qoladigan', 'hero.title2': "ko'ylaklar",
-      'hero.sub': "Kokteyldan to'ygacha 50 dan ortiq model. Eng yaxshisini tanlaydigan ayollar uchun tikilgan.",
+      'hero.sub': "Kokteyldan to'ygacha ko'ylaklar. Eng yaxshisini tanlaydigan ayollar uchun tikilgan.",
       'home.manifestoKicker': 'Maison Nargizka',
       'home.manifesto': "Biz maxsus daqiqalar uchun ko'ylaklar yaratamiz — birinchi uchrashuvdan to'y valsiga qadar. Nafis matolar, mukammal qiyofa va har bir modelning qo'lda nazorati.",
       'home.statModels': 'model mavjud', 'home.statCats': 'kolleksiya', 'home.statColors': 'rang', 'home.statDays': 'kun ichida qaytarish',
@@ -156,7 +156,7 @@
       'home.justIn': 'Butikka endi kelgan', 'home.seasonNew': 'Mavsum yangiliklari', 'home.buyersChoice': 'Xaridorlar tanlovi',
       'home.bestsellers': 'Bestsellerlar', 'home.perkShip': 'Bepul yetkazib berish', 'home.perkShipSub': '{sum} dan buyurtmada',
       'home.perkFit': "To'lovdan oldin kiyib ko'rish", 'home.perkFitSub': 'Kuryer 15 daqiqa kutadi',
-      'home.perkRet': '14 kun ichida qaytarish', 'home.perkRetSub': 'Ortiqcha savollarsiz',
+      'home.perkRet': '{days} ichida qaytarish', 'home.perkRetSub': 'Ortiqcha savollarsiz',
       'home.perkQual': 'Premium sifat', 'home.perkQualSub': "Har bir model qo'lda tekshiriladi",
       'home.club': 'Nargizka klubi', 'home.clubTitle': 'Birinchi buyurtmaga −10%',
       'home.clubText': 'Obuna bo\'ling va yangi kolleksiyalar hamda yopiq chegirmalar haqida birinchi bo\'lib biling.',
@@ -174,7 +174,7 @@
       'catalog.sortPriceAsc': 'Narx ↑', 'catalog.sortPriceDesc': 'Narx ↓',
       'catalog.saleOnly': 'Faqat chegirmali', 'catalog.inStock': 'Faqat mavjud',
       'catalog.size': "O'lcham", 'catalog.color': 'Rang', 'catalog.price': 'Narx', 'catalog.from': 'dan', 'catalog.to': 'gacha',
-      'catalog.empty': 'Hech narsa topilmadi', 'catalog.emptyHint': 'Filtrlarni tozalang yoki boshqa kategoriyani tanlang.',
+      'catalog.empty': 'Hech narsa topilmadi', 'catalog.emptyHint': 'Filtrlarni tozalang yoki boshqa kategoriyani tanlang.', 'catalog.soon': 'Yangi kolleksiya tez orada', 'catalog.soonHint': 'Katalogni tayyorlayapmiz. Yangiliklarga obuna bo‘ling yoki bizga yozing.',
       'catalog.shown': "{total} dan {n} ko'rsatildi",
       'crumbs.home': 'Bosh sahifa', 'crumbs.catalog': 'Katalog',
       'product.color': 'Rang', 'product.size': "O'lcham", 'product.sizeNone': 'tanlanmagan', 'product.qty': 'Miqdor',
@@ -183,7 +183,7 @@
       'product.bought': '{n} marta xarid qilingan', 'product.save': 'Siz {sum} tejaysiz', 'product.rate': 'kurs: $1 = {sum}',
       'product.shipPerk': '{sum} dan bepul yetkazib berish, shahar bo\'ylab — 1–2 kun',
       'product.fitPerk': "To'lovdan oldin kiyib ko'rish — kuryer 15 daqiqa kutadi",
-      'product.retPerk': '14 kun ichida oson qaytarish',
+      'product.retPerk': '{days} ichida oson qaytarish',
       'product.lowStock': 'Faqat {n} dona qoldi', 'product.inStock': 'Mavjud', 'product.selectSize': "O'lchamni tanlang",
       'checkout.title': 'Buyurtmani rasmiylashtirish', 'checkout.contact': "Aloqa ma'lumotlari", 'checkout.delivery': 'Yetkazib berish',
       'checkout.pay': "To'lov", 'checkout.name': 'Ism va familiya', 'checkout.phone': 'Telefon', 'checkout.email': 'E-mail',
@@ -200,7 +200,7 @@
       'modal.sizesTitle': "O'lcham jadvali", 'modal.deliveryTitle': 'Yetkazib berish va qaytarish',
       'modal.deliveryText1': 'Kuryer yetkazib berish — {ship}, {free} dan buyurtmada bepul.',
       'modal.deliveryText2': 'Shahar bo\'ylab 3 soatlik ekspress — {express}.',
-      'modal.deliveryText3': "Yorliqlar va tovar ko'rinishi saqlansa, 14 kun ichida qaytarish mumkin.",
+      'modal.deliveryText3': "Yorliqlar va tovar ko'rinishi saqlansa, {days} ichida qaytarish mumkin.",
       'toast.subOk': 'Obuna qilindingiz. Promokod savatda.',
       'toast.subMailOk': "Xat yuborildi. {code} promokodi savatda.",
       'toast.promoOk': "Promokod qo'llandi", 'toast.promoBad': 'Promokod yaroqsiz',
@@ -237,7 +237,16 @@
     if (s == null) s = DICT.ru[key];
     if (s == null) return key;
     if (vars) Object.keys(vars).forEach((k) => { s = s.split('{' + k + '}').join(String(vars[k])); });
-    return s;
+    return brandify(s);
+  }
+  /* бренд из настроек магазина подставляется во все тексты вместо «Nargizka» */
+  let brand = { name: 'Nargizka Shop', short: 'Nargizka' };
+  function brandify(s) {
+    if (brand.name === 'Nargizka Shop' && brand.short === 'Nargizka') return s;
+    return String(s).split('Nargizka Shop').join(brand.name).split('Nargizka').join(brand.short);
+  }
+  function setBrand(b) {
+    if (b && b.name) brand = { name: String(b.name), short: String(b.short || b.name) };
   }
   function setLang(next) {
     lang = next === 'uz' ? 'uz' : 'ru';
@@ -253,5 +262,5 @@
     if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return t('plural.model.few');
     return t('plural.model.many');
   }
-  w.I18N = { get lang() { return lang; }, t, setLang, cat, modelWord, DICT };
+  w.I18N = { get lang() { return lang; }, t, setLang, cat, modelWord, DICT, setBrand, brandify };
 })(window);

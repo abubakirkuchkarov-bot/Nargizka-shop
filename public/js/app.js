@@ -69,7 +69,17 @@
   }
   function returnText() {
     const n = +NS.settings.returnDays || 0;
+    if (I18N.lang === 'uz') return `${n} kun`;
     return `${n} ${plural(n, 'дня', 'дней', 'дней')}`;
+  }
+  /* тексты главного баннера: из админки (Скидки и акции → Главный баннер) для русской версии */
+  function heroText() {
+    const h = (NS.settings && NS.settings.hero) || {};
+    if (I18N.lang === 'ru' && (h.title || h.subtitle || h.kicker)) {
+      const lines = String(h.title || '').split('\n').map((x) => x.trim()).filter(Boolean);
+      return { kicker: h.kicker || '', t1: lines[0] || '', t2: lines.slice(1).join(' '), sub: h.subtitle || '' };
+    }
+    return { kicker: t('hero.kicker'), t1: t('hero.title1'), t2: t('hero.title2'), sub: t('hero.sub') };
   }
   function stars(r) {
     const full = Math.round(r);
@@ -122,12 +132,12 @@
     qty = qty || 1;
     const p = NS.product(id);
     if (!p) return false;
-    const avail = +p.stock[size] || 0;
+    const avail = NS.variantStock(p, color, size);
     const key = id + '|' + color + '|' + size;
     const line = cart.find((l) => l.key === key);
     const inCart = line ? line.qty : 0;
     if (inCart + qty > avail) {
-      toast(avail ? `В наличии только ${avail} шт. размера ${size}` : 'Этого размера сейчас нет в наличии', 'error');
+      toast(avail ? `В наличии только ${avail} шт. (${[color, size].filter(Boolean).join(', ')})` : 'Этого размера в выбранном цвете сейчас нет', 'error');
       return false;
     }
     if (line) line.qty += qty; else cart.push({ key, id, color, size, qty });
@@ -334,9 +344,9 @@
         <div class="grain"></div>
         <div class="container hero__inner">
           <div class="hero__copy">
-            <div class="hero__kicker"><span>${esc(t('hero.kicker'))}</span></div>
-            <h1 class="hero__title"><span class="hero__line"><span>${esc(t('hero.title1'))}</span></span><span class="hero__line"><span>${esc(t('hero.title2'))}</span></span></h1>
-            <p class="hero__sub">${esc(t('hero.sub'))}</p>
+            <div class="hero__kicker"><span>${esc(heroText().kicker)}</span></div>
+            <h1 class="hero__title"><span class="hero__line"><span>${esc(heroText().t1)}</span></span>${heroText().t2 ? `<span class="hero__line"><span>${esc(heroText().t2)}</span></span>` : ''}</h1>
+            <p class="hero__sub">${esc(heroText().sub)}</p>
             <div class="hero__ctas">
               <a href="#/catalog?sort=new" class="btn btn--light">${t('btn.viewCollection')}</a>
               ${maxSale ? `<a href="#/catalog?sale=1" class="btn btn--gold">${t('btn.saleTo', { n: maxSale })}</a>` : ''}
@@ -360,21 +370,21 @@
       </section>` : ''}
 
       <div class="marquee" aria-hidden="true"><div class="marquee__track">
-        ${[0, 1].map(() => `<div class="marquee__group">${['Nargizka', 'Maison de Robes', 'Haute Couture', 'Evening', 'Bridal', 'Cocktail'].map((w) => `<span>${w}</span><i>✦</i>`).join('')}</div>`).join('')}
+        ${[0, 1].map(() => `<div class="marquee__group">${[NS.brand().short, 'Maison de Robes', 'Haute Couture', 'Evening', 'Bridal', 'Cocktail'].map((w) => `<span>${w}</span><i>✦</i>`).join('')}</div>`).join('')}
       </div></div>
 
       <section class="manifesto"><div class="container manifesto__inner">
         <div class="section__kicker">${t('home.manifestoKicker')}</div>
         <p class="manifesto__text">${t('home.manifesto')}</p>
         <div class="stats">
-          <div><b data-count="${all.length}">${all.length}</b><span>${t('home.statModels')}</span></div>
+          ${all.length ? `<div><b data-count="${all.length}">${all.length}</b><span>${t('home.statModels')}</span></div>` : ''}
           <div><b data-count="${NS.CATEGORIES.length}">${NS.CATEGORIES.length}</b><span>${t('home.statCats')}</span></div>
           <div><b data-count="${Object.keys(NS.COLORS).length}">${Object.keys(NS.COLORS).length}</b><span>${t('home.statColors')}</span></div>
           <div><b data-count="${+s.returnDays}">${+s.returnDays}</b><span>${t('home.statDays')}</span></div>
         </div>
       </div></section>
 
-      <section class="collections">
+      <section class="collections" ${all.length ? '' : 'hidden'}>
         <div class="container section__head">
           <div><div class="section__kicker">${t('home.collections')}</div><h2 class="section__title">${t('home.chooseLook')}</h2></div>
           <a href="#/catalog" class="btn btn--outline" style="height:44px">${t('btn.allDresses')}</a>
@@ -414,12 +424,12 @@
         <div class="grid">${news.map(card).join('')}</div>
       </div></section>` : ''}
 
-      ${railSection(t('home.buyersChoice'), t('home.bestsellers'), 'railHits', hits, '#/catalog?sort=popular')}
+      ${hits.length ? railSection(t('home.buyersChoice'), t('home.bestsellers'), 'railHits', hits, '#/catalog?sort=popular') : ''}
 
       <section class="section section--tight section--paper"><div class="container perks">
         <div class="perk">${ICONS.truck}<div><b>${t('home.perkShip')}</b><span>${t('home.perkShipSub', { sum: NS.money(s.freeShippingFrom) })}</span></div></div>
         <div class="perk">${ICONS.hanger}<div><b>${t('home.perkFit')}</b><span>${t('home.perkFitSub')}</span></div></div>
-        <div class="perk">${ICONS.ret}<div><b>${t('home.perkRet')}</b><span>${t('home.perkRetSub')}</span></div></div>
+        <div class="perk">${ICONS.ret}<div><b>${t('home.perkRet', { days: returnText() })}</b><span>${t('home.perkRetSub')}</span></div></div>
         <div class="perk">${ICONS.gem}<div><b>${t('home.perkQual')}</b><span>${t('home.perkQualSub')}</span></div></div>
       </div></section>
 
@@ -544,7 +554,9 @@
           </div>
           ${shown.length
             ? `<div class="grid">${shown.map(card).join('')}</div>`
-            : `<div class="empty"><h3>${t('catalog.empty')}</h3><p>${t('catalog.emptyHint')}</p><button class="btn btn--dark" data-f="reset">${t('btn.reset')}</button></div>`}
+            : NS.visibleProducts().length
+              ? `<div class="empty"><h3>${t('catalog.empty')}</h3><p>${t('catalog.emptyHint')}</p><button class="btn btn--dark" data-f="reset">${t('btn.reset')}</button></div>`
+              : `<div class="empty"><h3>${t('catalog.soon')}</h3><p>${t('catalog.soonHint')}</p><a class="btn btn--dark" href="#/">${t('crumbs.home')}</a></div>`}
           ${list.length > shown.length ? `
             <div class="more">
               <p>${t('catalog.shown', { n: shown.length, total: list.length })}</p>
@@ -594,7 +606,11 @@
     const related = NS.visibleProducts().filter((x) => x.category === p.category && x.id !== p.id).slice(0, 4);
     const recentList = recent.filter((x) => x !== id).map((x) => NS.product(x)).filter((x) => x && x.visible).slice(0, 8);
     const inStock = NS.totalStock(p) > 0;
-    const state = { color: 0, size: null, qty: 1 };
+    // первый цвет, у которого есть остаток
+    const firstColor = Math.max(0, p.colors.findIndex((c) => NS.colorStock(p, c) > 0));
+    const state = { color: firstColor, size: null, qty: 1 };
+    const curColor = () => p.colors[state.color] || '';
+    const vs = (sz) => NS.variantStock(p, curColor(), sz);
 
     app.innerHTML = `
       <div class="container">
@@ -618,13 +634,13 @@
             ${p.sold > 50 ? `<div class="sold-note">Купили ${p.sold} раз</div>` : ''}
 
             <div class="opt">
-              <div class="opt__head"><span>Цвет: <b id="colorName">${esc(p.colors[0])}</b></span></div>
-              <div class="color-grid">${p.colors.map((c, i) => `<button class="swatch-lg ${i === 0 ? 'is-on' : ''}" data-color="${i}" style="background:${NS.colorHex(c)}" title="${esc(c)}" aria-label="${esc(c)}"></button>`).join('')}</div>
+              <div class="opt__head"><span>Цвет: <b id="colorName">${esc(p.colors[firstColor] || '')}</b></span></div>
+              <div class="color-grid">${p.colors.map((c, i) => `<button class="swatch-lg ${i === firstColor ? 'is-on' : ''} ${NS.colorStock(p, c) ? '' : 'is-out'}" data-color="${i}" style="background:${NS.colorHex(c)}" title="${esc(c)}${NS.colorStock(p, c) ? '' : ' — нет в наличии'}" aria-label="${esc(c)}"></button>`).join('')}</div>
             </div>
 
             <div class="opt">
               <div class="opt__head"><span>Размер: <b id="sizeName">не выбран</b></span><button class="link-btn" data-modal="sizes">Таблица размеров</button></div>
-              <div class="sizes-row" id="sizesRow">${sizes.map((sz) => `<button class="size-btn" data-size-pick="${sz}" ${+p.stock[sz] ? '' : 'disabled'}>${sz}</button>`).join('')}</div>
+              <div class="sizes-row" id="sizesRow">${sizes.map((sz) => `<button class="size-btn" data-size-pick="${sz}" ${vs(sz) ? '' : 'disabled'}>${sz}</button>`).join('')}</div>
               <div class="stock-note" id="stockNote"></div>
             </div>
 
@@ -666,7 +682,7 @@
     };
     const updateStock = () => {
       const note = $('#stockNote');
-      const n = +p.stock[state.size];
+      const n = vs(state.size);
       note.className = 'stock-note ' + (n <= 3 ? 'stock-note--low' : 'stock-note--ok');
       note.textContent = n <= 3 ? `Осталось всего ${n} шт. — успейте заказать` : 'В наличии';
       if (state.qty > n) { state.qty = n; $('#pQty').value = n; }
@@ -681,13 +697,21 @@
         $$('[data-color]').forEach((b) => b.classList.toggle('is-on', b === t));
         $('#colorName').textContent = p.colors[state.color];
         setMain(Math.min(state.color, gallery.length - 1));
+        // размеры зависят от цвета: недоступные гасим, выбранный сбрасываем, если его нет в этом цвете
+        $$('[data-size-pick]').forEach((b) => { b.disabled = !vs(b.dataset.sizePick); });
+        if (state.size && !vs(state.size)) {
+          state.size = null;
+          $$('[data-size-pick]').forEach((b) => b.classList.remove('is-on'));
+          $('#sizeName').textContent = 'не выбран';
+          $('#stockNote').textContent = '';
+        } else if (state.size) updateStock();
       } else if (t.dataset.sizePick) {
         state.size = t.dataset.sizePick;
         $$('[data-size-pick]').forEach((b) => b.classList.toggle('is-on', b === t));
         $('#sizeName').textContent = state.size;
         updateStock();
       } else if (t.dataset.pqty) {
-        const max = state.size ? +p.stock[state.size] : 10;
+        const max = state.size ? vs(state.size) : 10;
         state.qty = Math.min(Math.max(1, state.qty + +t.dataset.pqty), Math.max(1, max));
         $('#pQty').value = state.qty;
       } else if (t.id === 'addBtn') {
@@ -809,8 +833,8 @@
 
     const tot = totals(els.delivery.value);
     for (const l of tot.lines) {
-      if ((+l.p.stock[l.size] || 0) < l.qty) {
-        toast(`${esc(l.p.name)} (${l.size}): ${t('checkout.errStock')} (${+l.p.stock[l.size] || 0})`, 'error');
+      if (NS.variantStock(l.p, l.color, l.size) < l.qty) {
+        toast(`${esc(l.p.name)} (${l.size}): ${t('checkout.errStock')} (${NS.variantStock(l.p, l.color, l.size)})`, 'error');
         return;
       }
     }
@@ -882,7 +906,7 @@
       return `<h2>${t('modal.deliveryTitle')}</h2>
         <p>${t('modal.deliveryText1', { ship: NS.money(s.shippingCost), free: NS.money(s.freeShippingFrom) })}</p>
         <p style="margin-top:10px">${t('modal.deliveryText2', { express: NS.money(s.expressCost) })}</p>
-        <p style="margin-top:10px">${t('modal.deliveryText3')}</p>`;
+        <p style="margin-top:10px">${t('modal.deliveryText3', { days: returnText() })}</p>`;
     },
   };
 
@@ -918,6 +942,26 @@
   }
 
   let announceTimer;
+  /* название, логотип и цвета магазина из настроек (Админ → Настройки → Бренд) */
+  function applyBrand() {
+    const b = NS.brand();
+    I18N.setBrand(b);
+    const short = String(b.short || b.name);
+    const rest = String(b.name).toLowerCase().startsWith(short.toLowerCase()) ? String(b.name).slice(short.length).trim() : '';
+    $$('.brand').forEach((el) => {
+      el.setAttribute('aria-label', b.name);
+      const img = el.querySelector('.brand__logo');
+      if (img) img.src = b.logoUrl || 'assets/logo.svg';
+      const word = el.querySelector('.brand__word');
+      if (word) word.innerHTML = esc(short.toUpperCase()) + (rest ? `<small>${esc(rest.toUpperCase())}</small>` : '');
+    });
+    const copy = $('#brandCopy');
+    if (copy) copy.textContent = b.name;
+    const root = document.documentElement.style;
+    if (b.accent) { root.setProperty('--gold', b.accent); root.setProperty('--gold-2', NS.shade(b.accent, 0.25)); } else { root.removeProperty('--gold'); root.removeProperty('--gold-2'); }
+    if (b.dark) root.setProperty('--ink', b.dark); else root.removeProperty('--ink');
+  }
+
   function renderChrome() {
     const s = NS.settings;
     const items = (s.announcements || []).filter(Boolean);
@@ -961,11 +1005,23 @@
       <h5>${t('nav.account')}</h5>
       <a href="#/wishlist">${t('nav.wish')} <span>›</span></a>`;
 
+    applyBrand();
     $('#footerCats').innerHTML = NS.CATEGORIES.slice(0, 6).map((c) => `<a href="#/catalog?cat=${c.id}">${catName(c.id)}</a>`).join('');
     $('#footerContacts').innerHTML = `<a href="tel:${esc(s.contacts.phone.replace(/[^\d+]/g, ''))}">${esc(s.contacts.phone)}</a>
       <a href="mailto:${esc(s.contacts.email)}">${esc(s.contacts.email)}</a>
       <a>${esc(s.contacts.address)}</a><a>Instagram: ${esc(s.contacts.instagram)}</a>
-      ${s.contacts.telegram ? `<a href="https://t.me/${esc(s.contacts.telegram.replace(/^@/, ''))}" target="_blank" rel="noopener">Telegram: ${esc(s.contacts.telegram)}</a>` : ''}`;
+      ${s.contacts.telegram ? `<a href="https://t.me/${esc(s.contacts.telegram.replace(/^@/, ''))}" target="_blank" rel="noopener">Telegram: ${esc(s.contacts.telegram)}</a>` : ''}
+      ${(() => {
+        const b = NS.brand();
+        const links = [];
+        if (b.whatsapp) links.push(`<a href="https://wa.me/${esc(b.whatsapp.replace(/\D/g, ''))}" target="_blank" rel="noopener">WhatsApp: ${esc(b.whatsapp)}</a>`);
+        [['facebook', 'Facebook'], ['tiktok', 'TikTok'], ['youtube', 'YouTube']].forEach(([k, label]) => {
+          if (b[k]) links.push(`<a href="${esc(b[k])}" target="_blank" rel="noopener">${label}</a>`);
+        });
+        if (b.mapUrl) links.push(`<a href="${esc(b.mapUrl)}" target="_blank" rel="noopener">Как нас найти</a>`);
+        if (b.workHours) links.push(`<a>${esc(b.workHours)}</a>`);
+        return links.join('');
+      })()}`;
     $('#year').textContent = new Date().getFullYear();
     $('#curBtn').innerHTML = ['UZS', 'USD'].map((c) => `<b class="${NS.cur === c ? 'is-on' : ''}">${c === 'UZS' ? 'СУМ' : 'USD'}</b>`).join('<i>/</i>');
     $('#curBtn').title = `1 $ = ${NS.money(NS.usdRate(), 'UZS')}`;
@@ -1011,7 +1067,7 @@
     if ((x = el('[data-quick]'))) {
       e.preventDefault();
       const p = NS.product(x.dataset.quick);
-      if (p && addToCart(p.id, p.colors[0], x.dataset.size)) document.dispatchEvent(new CustomEvent('ns:added', { detail: { el: x } }));
+      if (p && addToCart(p.id, NS.colorWithSize(p, x.dataset.size), x.dataset.size)) document.dispatchEvent(new CustomEvent('ns:added', { detail: { el: x } }));
       return;
     }
     if ((x = el('[data-open-cart]'))) { e.preventDefault(); openPanel($('#cartDrawer')); return; }
@@ -1025,7 +1081,7 @@
       const p = line && NS.product(line.id);
       if (!line || !p) return;
       const next = line.qty + +x.dataset.step;
-      if (next > (+p.stock[line.size] || 0)) { toast(`${t('checkout.errStock')}: ${+p.stock[line.size] || 0}`, 'error'); return; }
+      if (next > NS.variantStock(p, line.color, line.size)) { toast(`${t('checkout.errStock')}: ${NS.variantStock(p, line.color, line.size)}`, 'error'); return; }
       if (next < 1) cart = cart.filter((l) => l !== line); else line.qty = next;
       saveCart();
       return;

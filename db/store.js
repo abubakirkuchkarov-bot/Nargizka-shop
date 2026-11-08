@@ -11,16 +11,25 @@
 const path = require('path');
 const crypto = require('crypto');
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
+const NS = require('../js/store.js');
 const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`,
   `CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS products (
      id TEXT PRIMARY KEY, sort INTEGER NOT NULL DEFAULT 0, sku TEXT, name TEXT, category TEXT,
      visible INTEGER NOT NULL DEFAULT 1, price INTEGER NOT NULL DEFAULT 0, data TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
-  `CREATE TABLE IF NOT EXISTS product_stock (
-     product_id TEXT NOT NULL, size TEXT NOT NULL, qty INTEGER NOT NULL CHECK (qty >= 0),
-     PRIMARY KEY (product_id, size))`,
+  // остаток по варианту «Цвет|Размер» — единственный источник правды по складу
+  `CREATE TABLE IF NOT EXISTS product_variants (
+     product_id TEXT NOT NULL, variant TEXT NOT NULL, qty INTEGER NOT NULL CHECK (qty >= 0),
+     PRIMARY KEY (product_id, variant))`,
+  // журнал движений склада: каждое изменение остатка — одна строка, ничего не стирается
+  `CREATE TABLE IF NOT EXISTS stock_moves (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, product_id TEXT NOT NULL, product_name TEXT,
+     variant TEXT NOT NULL, delta INTEGER NOT NULL, qty_after INTEGER NOT NULL, type TEXT NOT NULL,
+     reason TEXT, ref TEXT, unit_cost INTEGER)`,
+  `CREATE INDEX IF NOT EXISTS stock_moves_at ON stock_moves(at DESC)`,
+  `CREATE INDEX IF NOT EXISTS stock_moves_ref ON stock_moves(ref)`,
   `CREATE TABLE IF NOT EXISTS orders (
      id TEXT PRIMARY KEY, date INTEGER NOT NULL, status TEXT NOT NULL, channel TEXT, total INTEGER NOT NULL DEFAULT 0,
      data TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
@@ -82,7 +91,8 @@ async function ensureSchema(c) {
 /* ---------- чтение ---------- */
 const PARTS = {
   meta: [`SELECT key, value FROM meta`],
-  products: [`SELECT id, sort, data FROM products ORDER BY sort, id`, `SELECT product_id, size, qty FROM product_stock`],
+  products: [`SELECT id, sort, data FROM products ORDER BY sort, id`, `SELECT product_id, variant, qty FROM product_variants`],
+  moves: [`SELECT id, at, product_id, product_name, variant, delta, qty_after, type, reason, ref, unit_cost FROM stock_moves ORDER BY id DESC LIMIT 1000`],
   settings: [`SELECT value FROM kv WHERE key = 'settings'`],
   orders: [`SELECT id, data FROM orders ORDER BY date DESC, id DESC`],
   finance: [`SELECT id, data FROM finance_entries ORDER BY date DESC, id`, `SELECT value FROM kv WHERE key = 'finance_opening'`],
@@ -111,11 +121,12 @@ function buildState(list, map, results) {
   const snap = {};
   if (by.products) {
     const stock = {};
-    by.products[1].forEach((r) => { (stock[r.product_id] = stock[r.product_id] || {})[r.size] = Number(r.qty) || 0; });
+    by.products[1].forEach((r) => { (stock[r.product_id] = stock[r.product_id] || {})[r.variant] = Number(r.qty) || 0; });
     db.products = by.products[0].map((r) => {
       const p = parseJson(r.data, {});
       p.id = r.id;
-      p.stock = stock[r.id] || {};
+      p.vstock = stock[r.id] || {};
+      delete p.stock;
       return p;
     });
     snap.products = new Map(db.products.map((p, i) => [p.id, productSnap(p, i)]));
@@ -133,6 +144,12 @@ function buildState(list, map, results) {
     db.finance.openingBalance = Number(parseJson(by.finance[1][0] && by.finance[1][0].value, 0)) || 0;
     snap.finance = new Map(db.finance.entries.map((e) => [e.id, JSON.stringify(e)]));
     snap.financeOpening = db.finance.openingBalance;
+  }
+  if (by.moves) {
+    db.stockMoves = by.moves[0].map((r) => ({
+      id: r.id, at: r.at, productId: r.product_id, productName: r.product_name, variant: r.variant,
+      delta: r.delta, qtyAfter: r.qty_after, type: r.type, reason: r.reason || '', ref: r.ref || '', unitCost: r.unit_cost,
+    }));
   }
   if (by.subscribers) {
     db.subscribers = by.subscribers[0].map((r) => r.email);
@@ -159,7 +176,8 @@ function buildState(list, map, results) {
 function productSnap(p, i) {
   const data = Object.assign({}, p);
   delete data.stock;
-  return { sort: i, data: JSON.stringify(data), stock: JSON.stringify(p.stock || {}) };
+  delete data.vstock;
+  return { sort: i, data: JSON.stringify(data), stock: JSON.stringify(p.vstock || {}) };
 }
 
 /* ---------- запись изменений ---------- */
@@ -192,26 +210,26 @@ function diffStatements(state) {
       }
       if (!old || old.stock !== cur.stock) {
         const oldStock = old ? JSON.parse(old.stock) : {};
-        const st = p.stock || {};
-        Object.keys(st).forEach((size) => {
-          const q = Math.max(0, Math.round(+st[size] || 0));
-          if (oldStock[size] !== q) {
+        const st = p.vstock || {};
+        Object.keys(st).forEach((variant) => {
+          const q = Math.max(0, Math.round(+st[variant] || 0));
+          if (oldStock[variant] !== q) {
             out.push({
-              sql: `INSERT INTO product_stock(product_id, size, qty) VALUES (?,?,?) ON CONFLICT(product_id, size) DO UPDATE SET qty = excluded.qty`,
-              args: [p.id, String(size), q],
+              sql: `INSERT INTO product_variants(product_id, variant, qty) VALUES (?,?,?) ON CONFLICT(product_id, variant) DO UPDATE SET qty = excluded.qty`,
+              args: [p.id, String(variant), q],
             });
           }
         });
-        Object.keys(oldStock).filter((s) => !(s in st)).forEach((size) => {
-          out.push({ sql: `DELETE FROM product_stock WHERE product_id = ? AND size = ?`, args: [p.id, size] });
+        Object.keys(oldStock).filter((k) => !(k in st)).forEach((variant) => {
+          out.push({ sql: `DELETE FROM product_variants WHERE product_id = ? AND variant = ?`, args: [p.id, variant] });
         });
       }
     });
     for (const [id, old] of snap.products) {
       if (seen.has(id)) continue;
-      const full = Object.assign(JSON.parse(old.data), { stock: JSON.parse(old.stock) });
+      const full = Object.assign(JSON.parse(old.data), { vstock: JSON.parse(old.stock) });
       archive('products', id, JSON.stringify(full));
-      out.push({ sql: `DELETE FROM product_stock WHERE product_id = ?`, args: [id] });
+      out.push({ sql: `DELETE FROM product_variants WHERE product_id = ?`, args: [id] });
       out.push({ sql: `DELETE FROM products WHERE id = ?`, args: [id] });
     }
   }
@@ -398,7 +416,17 @@ function snapshotStatement(state, reason) {
 async function importSnapshot(c, source, opts) {
   const o = opts || {};
   const raw = typeof source === 'string' ? source : JSON.stringify(source);
-  const snapshot = JSON.parse(raw);
+  const snapshot = NS.migrate(JSON.parse(raw));
+  // «чистый запуск»: переносятся только настройки; товары, заказы, финансы и подписчики уходят в архив
+  if (o.clean) {
+    o.quarantineOrders = [];
+    o.quarantineSubscribers = [];
+    o.archiveAll = { products: snapshot.products, orders: snapshot.orders, subscribers: snapshot.subscribers, finance: snapshot.finance };
+    snapshot.products = [];
+    snapshot.orders = [];
+    snapshot.subscribers = [];
+    snapshot.finance = { openingBalance: 0, entries: [] };
+  }
   const qOrders = new Map((o.quarantineOrders || []).map((x) => [x.id, x.reason]));
   const qSubs = new Map((o.quarantineSubscribers || []).map((x) => [x.email, x.reason]));
   await ensureSchema(c);
@@ -412,15 +440,21 @@ async function importSnapshot(c, source, opts) {
     const now = Date.now();
     const st = [];
     st.push({ sql: `INSERT INTO backups(created_at, reason, sha256, data) VALUES (?,?,?,?)`, args: [now, 'source-before-migration' + (o.sourceName ? ': ' + o.sourceName : ''), sha256(raw), raw] });
+    if (o.archiveAll) {
+      Object.keys(o.archiveAll).forEach((kind) => {
+        st.push({ sql: `INSERT INTO quarantine(kind, row_id, data, reason, created_at) VALUES (?, NULL, ?, ?, ?)`, args: ['all-' + kind, JSON.stringify(o.archiveAll[kind]), 'чистый запуск: архив исходных данных', now] });
+      });
+    }
     (snapshot.products || []).forEach((p, i) => {
       const data = Object.assign({}, p);
       delete data.stock;
+      delete data.vstock;
       st.push({
         sql: `INSERT INTO products(id, sort, sku, name, category, visible, price, data, updated_at) VALUES (?,?,?,?,?,?,?,?,?)`,
         args: [p.id, i, p.sku || '', p.name || '', p.category || '', p.visible ? 1 : 0, Math.round(+p.price || 0), JSON.stringify(data), now],
       });
-      Object.keys(p.stock || {}).forEach((size) => {
-        st.push({ sql: `INSERT INTO product_stock(product_id, size, qty) VALUES (?,?,?)`, args: [p.id, size, Math.max(0, Math.round(+p.stock[size] || 0))] });
+      Object.keys(p.vstock || {}).forEach((variant) => {
+        st.push({ sql: `INSERT INTO product_variants(product_id, variant, qty) VALUES (?,?,?)`, args: [p.id, variant, Math.max(0, Math.round(+p.vstock[variant] || 0))] });
       });
     });
     (snapshot.orders || []).forEach((ord) => {
@@ -463,7 +497,7 @@ async function importSnapshot(c, source, opts) {
 async function summary(c) {
   const r = await c.run([
     `SELECT COUNT(*) AS n FROM products`,
-    `SELECT COALESCE(SUM(qty),0) AS n FROM product_stock`,
+    `SELECT COALESCE(SUM(qty),0) AS n FROM product_variants`,
     `SELECT COUNT(*) AS n FROM orders`,
     `SELECT COUNT(*) AS n FROM quarantine`,
     `SELECT COUNT(*) AS n FROM subscribers`,
@@ -471,11 +505,12 @@ async function summary(c) {
     `SELECT COUNT(*) AS n FROM images`,
     `SELECT COUNT(*) AS n FROM backups`,
     `SELECT key, value FROM meta`,
+    `SELECT COUNT(*) AS n FROM stock_moves`,
   ]);
   const n = (i) => Number(r[i].rows[0].n);
   const meta = {};
   r[8].rows.forEach((x) => { meta[x.key] = x.value; });
-  return { products: n(0), stockUnits: n(1), orders: n(2), quarantined: n(3), subscribers: n(4), financeEntries: n(5), images: n(6), backups: n(7), initializedAt: meta.initialized_at || null, schemaVersion: meta.schema_version };
+  return { products: n(0), stockUnits: n(1), orders: n(2), quarantined: n(3), subscribers: n(4), financeEntries: n(5), images: n(6), backups: n(7), stockMoves: n(9), initializedAt: meta.initialized_at || null, schemaVersion: meta.schema_version };
 }
 
 module.exports = {

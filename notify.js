@@ -344,7 +344,7 @@ async function notifyAdmin(text) {
   }
   if (cfg.email.enabled && cfg.email.user) {
     const shop = cfg.email.from || cfg.email.user;
-    jobs.push(sendEmail(shop, 'Nargizka Shop — уведомление', text).catch(() => {}));
+    jobs.push(sendEmail(shop, (cfg.email.from ? String(cfg.email.from).replace(/<.*>/, '').trim() || 'Магазин' : 'Магазин') + ' — уведомление', text).catch(() => {}));
   }
   await Promise.all(jobs);
 }

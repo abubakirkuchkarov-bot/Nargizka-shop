@@ -3,7 +3,9 @@
  * Перенос данных Nargizka Shop из db.json в Turso.
  *
  *   node scripts/migrate-to-turso.js                      — ПРОВЕРКА (ничего не пишет): отчёт и резервная копия
- *   node scripts/migrate-to-turso.js --apply              — перенос в пустую базу Turso
+ *   node scripts/migrate-to-turso.js --clean              — ПРОВЕРКА «чистого запуска»: только настройки, без товаров/заказов/финансов
+ *   node scripts/migrate-to-turso.js --clean --apply      — чистый запуск: всё остальное уходит в архив (таблица quarantine)
+ *   node scripts/migrate-to-turso.js --apply              — перенос всех данных в пустую базу Turso
  *   node scripts/migrate-to-turso.js --verify             — сверка базы с файлом
  *
  * Параметры:
@@ -32,6 +34,7 @@ loadEnvFile(opt('--env', ''));
 const SOURCE = path.resolve(opt('--source', path.join(ROOT, 'data', 'db.json')));
 const APPLY = flag('--apply');
 const VERIFY = flag('--verify');
+const CLEAN = flag('--clean');
 
 const SEED_NAMES = new Set(['Дилноза С.', 'Мадина К.', 'Шахноза Т.', 'Нилуфар Р.', 'Сабина М.', 'Камола А.', 'Малика Б.', 'Гулнора Н.', 'Севара Е.', 'Зарина Ж.', 'Лола О.', 'Феруза Д.']);
 
@@ -97,6 +100,17 @@ function main() {
     (order.items || []).forEach((it) => { const k = it.id + '|' + it.size; restore[k] = (restore[k] || 0) + (+it.qty || 0); });
   });
 
+  if (CLEAN) {
+    console.log('\n=== ЧИСТЫЙ ЗАПУСК ===');
+    console.log('Переносятся только настройки: категории, цвета, размеры, доставка, оплата, контакты, бренд, промокоды.');
+    console.log('В архив (таблица quarantine, ничего не удаляется):');
+    console.log('   товары:', data.products.length, '· единиц на складе:', stockUnits);
+    console.log('   заказы:', orders.length, '· подписчики:', (data.subscribers || []).length, '· финансовые записи:', ((data.finance && data.finance.entries) || []).length);
+    console.log('Демо-акция «' + ((data.settings.flash || {}).title || '') + '» будет выключена, счётчики использования промокодов обнулены.');
+    console.log('Текст главной страницы «Более N моделей» будет заменён нейтральным (на пустом каталоге он неверен):');
+    console.log('   «' + String(((data.settings.hero || {}).subtitle) || '').slice(0, 120) + '»');
+    return { raw, data, sha, quarantineOrders: [], quarantineSubscribers: [], restore: {}, stockUnits: 0, realOrders: [] };
+  }
   console.log('\n=== Что будет перенесено ===');
   console.log('Товары:            ', data.products.length, '(видимых:', data.products.filter((p) => p.visible).length + ')');
   console.log('Единиц на складе:  ', stockUnits);
@@ -133,23 +147,38 @@ async function run() {
       }));
     }
     console.log('\nПеренос в Turso…');
+    if (CLEAN) {
+      const src = JSON.parse(plan.raw);
+      if (src.settings && src.settings.flash) src.settings.flash.active = false;
+      (src.settings && src.settings.promoCodes || []).forEach((p) => { p.used = 0; });
+      // «Более 50 моделей» на пустом каталоге — неправда; нейтральный текст, меняется в Админ → Маркетинг
+      if (src.settings && src.settings.hero && /Более\s+\d+\s+моделей/i.test(src.settings.hero.subtitle || '')) {
+        src.settings.hero.subtitle = 'Платья от коктейльных до свадебных. Сшито для женщин, которые выбирают лучшее.';
+      }
+      await Store.importSnapshot(c, JSON.stringify(src), { clean: true, sourceName: path.basename(SOURCE) + ' sha256:' + plan.sha.slice(0, 12) + ' (чистый запуск)' });
+      console.log('Готово.');
+    } else
     await Store.importSnapshot(c, flag('--restore-test-stock') ? JSON.stringify(source) : plan.raw, {
       sourceName: path.basename(SOURCE) + ' sha256:' + plan.sha.slice(0, 12),
       quarantineOrders: plan.quarantineOrders.map((q) => ({ id: q.id, reason: q.reason })),
       quarantineSubscribers: plan.quarantineSubscribers,
     });
-    console.log('Готово.');
+    if (!CLEAN) console.log('Готово.');
   }
   const s = await Store.summary(c);
   console.log('\n=== Сверка базы ===');
   console.log(JSON.stringify(s, null, 2));
   const expectStock = plan.stockUnits + (flag('--restore-test-stock') ? Object.values(plan.restore).reduce((a, b) => a + b, 0) : 0);
-  const checks = [
+  const checks = CLEAN ? [
+    ['товары', s.products, 0],
+    ['заказы', s.orders, 0],
+    ['архив исходных данных', s.quarantined, 4],
+  ] : [
     ['товары', s.products, plan.data.products.length],
     ['заказы', s.orders, plan.realOrders.length],
     ['карантин', s.quarantined, plan.quarantineOrders.length + plan.quarantineSubscribers.length],
   ];
-  if (APPLY) checks.push(['остатки', s.stockUnits, expectStock]);
+  if (APPLY && !CLEAN) checks.push(['остатки', s.stockUnits, expectStock]);
   let ok = true;
   checks.forEach(([n, got, exp]) => { const good = got === exp; ok = ok && good; console.log((good ? '✓ ' : '✗ ') + n + ': ' + got + (good ? '' : ' (ожидалось ' + exp + ')')); });
   if (!ok) process.exitCode = 2;

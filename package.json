@@ -9,8 +9,9 @@
     "migrate:check": "node scripts/migrate-to-turso.js",
     "migrate:apply": "node scripts/migrate-to-turso.js --apply",
     "migrate:verify": "node scripts/migrate-to-turso.js --verify",
-    "test": "node scripts/test/e2e.js",
-    "db:export": "node scripts/db-export.js"
+    "test": "node scripts/test/e2e-release.js && node scripts/test/e2e.js",
+    "db:export": "node scripts/db-export.js",
+    "migrate:clean": "node scripts/migrate-to-turso.js --clean"
   },
   "engines": {
     "node": ">=20"
