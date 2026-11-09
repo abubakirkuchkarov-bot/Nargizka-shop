@@ -816,7 +816,11 @@ async function api(req, res, route) {
     await limit('order:' + ip, 12, 60 * 60000, 'Слишком много заказов с одного устройства. Позвоните нам, и мы оформим заказ.');
     const order = await writeData(['products', 'settings'], (state) => { state.newOrders = true; return createOrder(body); });
     await afterOrder(order);
-    return send(res, 200, { order });
+    // покупателю — без закупочной цены и служебных полей
+    const pubOrder = Object.assign({}, order, { items: order.items.map((it) => { const x = Object.assign({}, it); delete x.cost; return x; }) });
+    delete pubOrder.history;
+    delete pubOrder.stockOut;
+    return send(res, 200, { order: pubOrder });
   }
   if (req.method === 'POST' && route === '/api/subscribe') {
     const email = str(body.email, 120).toLowerCase();

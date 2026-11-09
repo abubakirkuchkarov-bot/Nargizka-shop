@@ -1658,8 +1658,8 @@
       return `<div class="panels"><div class="panel">
           <div class="panel__head"><h2>Отчёт о прибыли</h2><span class="muted">за выбранный период</span></div>
           <table class="atable pl-table"><tbody>
-            ${row('Выручка (оплаченные заказы)', r.revenue, '', r.paidOrders + ' заказов, ' + r.itemsSold + ' шт.')}
-            ${r.refunds ? row('Возвраты покупателям', -r.refunds, '', r.refundedOrders + ' заказов') : ''}
+            ${row('Выручка (оплаченные заказы)', r.revenue, '', r.paidOrders + ' ' + plural(r.paidOrders, 'заказ', 'заказа', 'заказов') + ', ' + r.itemsSold + ' шт.')}
+            ${r.refunds ? row('Возвраты покупателям', -r.refunds, '', r.refundedOrders + ' ' + plural(r.refundedOrders, 'заказ', 'заказа', 'заказов')) : ''}
             ${row('Чистая выручка', r.netRevenue, 'is-total')}
             ${row('Себестоимость проданного', -r.netCogs, '', 'по закупочной цене на момент продажи')}
             ${row('Валовая прибыль', r.gross, 'is-total', 'маржа ' + r.margin + '%')}

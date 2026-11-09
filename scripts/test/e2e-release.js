@@ -106,11 +106,12 @@ async function main() {
   r = await req(A, 'POST', '/api/orders', order([{ id: 'pREL1', color: 'Чёрный', size: 'S', qty: 2 }]));
   check('заказ оформлен', r.status === 200, r.json);
   const o1 = r.json.order;
-  check('в заказе зафиксирована себестоимость', o1.items[0].cost === 800000 && o1.paid === false);
+  check('ответ покупателю без закупочной цены', !('cost' in o1.items[0]) && !/800000/.test(JSON.stringify(o1)) && o1.paid === false);
   r = await req(B, 'GET', '/api/admin/db', null, token);
   let A_db = r.json.db;
   P = A_db.products.find((x) => x.id === 'pREL1');
   check('заказ появился в админке как «Новый», не оплачен', A_db.orders[0].id === o1.id && A_db.orders[0].status === 'Новый' && !A_db.orders[0].paid);
+  check('в заказе (в админке) зафиксирована себестоимость', A_db.orders[0].items[0].cost === 800000);
   check('списан ровно вариант Чёрный S (3 → 1), остальные не тронуты', vs(P, 'Чёрный', 'S') === 1 && vs(P, 'Чёрный', 'M') === 2 && vs(P, 'Бордо', 'M') === 1, P.vstock);
   check('продажа записана в журнал склада', A_db.stockMoves.some((m) => m.type === 'sale' && m.ref === o1.id && m.delta === -2));
 
