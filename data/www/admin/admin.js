@@ -31,8 +31,8 @@
     };
   }
   const ui = {
-    products: { q: '', cat: '', filter: 'all', sort: 'new', sel: new Set() },
-    orders: { q: '', status: '' },
+    products: { q: '', cat: '', filter: 'all', sort: 'new', sel: new Set(), tab: 'list', mq: '', mtype: '' },
+    orders: { q: '', status: '', pay: '' },
     finance: { from: '', to: '', kind: 'all', q: '', paidOnly: true, preset: 'month', tab: 'overview', _keepFocus: false },
   };
   let finSearchTimer = null;
@@ -196,6 +196,7 @@
     $('#login').hidden = true;
     $('#login').style.display = 'none';
     $('#admin').hidden = false;
+    applyAdminBrand();
     go(location.hash.slice(2) || 'dashboard');
   }
 
@@ -219,50 +220,91 @@
   }
 
   /* ---------- обзор ---------- */
+  function plural(n, one, few, many) {
+    const m10 = n % 10, m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return one;
+    if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+    return many;
+  }
+
+  /* название магазина в админке */
+  function applyAdminBrand() {
+    const b = NS.brand();
+    if (window.I18N) I18N.setBrand(b);
+    document.title = b.name + ' — панель управления';
+    const side = $('.side__brand span, .sidebar__brand span');
+    if (side) side.innerHTML = esc(String(b.short).toUpperCase()) + '<small>ADMIN</small>';
+    $$('.side__brand img, .sidebar__brand img, .login__logo').forEach((img) => { img.src = b.logoUrl || '/assets/logo.svg'; img.alt = b.name; });
+  }
+
   function viewDashboard() {
     const orders = NS.db.orders;
-    const valid = orders.filter((o) => o.status !== 'Отменён');
-    const revenue = valid.reduce((a, o) => a + o.total, 0);
     const prods = NS.products();
+    const now = new Date();
+    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const today = NS.financeReport(NS.db, dayStart, Date.now() + 60000);
+    const month = NS.financeReport(NS.db, monthStart, Date.now() + 60000);
+    const fresh = orders.filter((o) => o.status === 'Новый');
+    const unpaid = orders.filter((o) => !o.paid && !NS.STOCK_FREE_STATUSES.includes(o.status));
     const low = prods.filter((p) => NS.totalStock(p) <= 3).sort((a, b) => NS.totalStock(a) - NS.totalStock(b));
-    const onSale = prods.filter((p) => NS.discountOf(p) > 0).length;
     const units = prods.reduce((a, p) => a + NS.totalStock(p), 0);
-    const top = prods.slice().sort((a, b) => b.sold - a.sold).slice(0, 6);
-    const promoUsed = orders.filter((o) => o.promo).length;
+    const stockValue = prods.reduce((a, p) => a + NS.totalStock(p) * (+p.cost || 0), 0);
+    const noCost = prods.filter((p) => !(+p.cost > 0)).length;
+    const noPhoto = prods.filter((p) => !(p.images || []).length).length;
+    const top = prods.filter((p) => p.sold > 0).sort((a, b) => b.sold - a.sold).slice(0, 6);
 
     const days = [];
     for (let i = 13; i >= 0; i--) {
       const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i);
       days.push({ t: d.getTime(), sum: 0, n: 0 });
     }
-    valid.forEach((o) => {
-      const d = new Date(o.date); d.setHours(0, 0, 0, 0);
+    orders.forEach((o) => {
+      if (!o.paid) return;
+      const d = new Date(o.paidAt || o.date); d.setHours(0, 0, 0, 0);
       const x = days.find((k) => k.t === d.getTime());
-      if (x) { x.sum += o.total; x.n++; }
+      if (x) { x.sum += o.refunded ? 0 : o.total; x.n++; }
     });
     const max = Math.max(1, ...days.map((x) => x.sum));
     const W = 700, H = 220, bw = W / days.length;
 
     $('#topbarActions').innerHTML = `<button class="btn btn--dark" data-new>${t('admin.addProduct')}</button>`;
 
+    const todo = [];
+    if (!prods.length) todo.push(`<li><b>Добавьте первый товар</b> — фото, цена, цвета и остатки. <button class="link-btn" data-new>Добавить →</button></li>`);
+    if (fresh.length) todo.push(`<li><b>${fresh.length} новых заказов</b> — позвоните клиентам и подтвердите. <button class="link-btn" data-go="orders">Открыть →</button></li>`);
+    if (unpaid.length) todo.push(`<li><b>${unpaid.length} заказов не оплачено</b> на ${money(unpaid.reduce((a, o) => a + o.total, 0))}. <button class="link-btn" data-go="orders">Посмотреть →</button></li>`);
+    if (low.length && prods.length) todo.push(`<li><b>${low.length} товаров заканчиваются</b> (осталось 3 шт. или меньше). <button class="link-btn" data-go="products">Пополнить →</button></li>`);
+    if (noCost && prods.length) todo.push(`<li>У <b>${noCost} товаров</b> нет закупочной цены — прибыль считается неточно.</li>`);
+    if (noPhoto && prods.length) todo.push(`<li>У <b>${noPhoto} товаров</b> нет фото — на сайте показан рисунок-заглушка.</li>`);
+
     view.innerHTML = `
+      <div class="quick-actions">
+        <button type="button" data-new><b>+ Новый товар</b><small>фото, цена, остатки</small></button>
+        <button type="button" data-stock-in><b>Поступление</b><small>пришла новая партия</small></button>
+        <button type="button" data-store-sale><b>Продажа / заказ</b><small>в магазине или по телефону</small></button>
+        <button type="button" data-go="orders"><b>Заказы${fresh.length ? ' · ' + fresh.length + ' новых' : ''}</b><small>подтвердить, отметить оплату</small></button>
+      </div>
+
+      <div class="panel">
+        <div class="panel__head"><h2>Что сделать сейчас</h2></div>
+        ${todo.length ? `<ul class="todo-list" style="margin:0;padding-left:18px;line-height:1.9">${todo.join('')}</ul>` : '<p class="muted" style="margin:0">Всё в порядке: новых заказов нет, неоплаченных нет, остатки в норме.</p>'}
+      </div>
+
       <div class="kpis">
-        <div class="kpi kpi--gold"><span>Выручка</span><b>${money(revenue)}</b><small>≈ ${usd(revenue)} · без отменённых</small></div>
-        <div class="kpi"><span>Заказы</span><b>${valid.length}</b><small>новых: ${orders.filter((o) => o.status === 'Новый').length}</small></div>
-        <div class="kpi"><span>Средний чек</span><b>${money(valid.length ? revenue / valid.length : 0)}</b><small>≈ ${usd(valid.length ? revenue / valid.length : 0)}</small></div>
-        <div class="kpi"><span>Товары</span><b>${prods.filter((p) => p.visible).length} / ${prods.length}</b><small>на складе ${units} шт.</small></div>
-        <div class="kpi"><span>Со скидкой</span><b>${onSale}</b><small>${NS.flashActive() ? 'идёт акция ' + esc(NS.settings.flash.title) : 'акция выключена'}</small></div>
-        <div class="kpi"><span>С промокодом</span><b>${promoUsed}</b><small>заказов из ${orders.length}</small></div>
-        <div class="kpi"><span>Заканчиваются</span><b class="${low.length ? 'stock-low' : ''}">${low.length}</b><small>товаров с остатком ≤ 3</small></div>
-        <div class="kpi"><span>Курс доллара</span><b>${money(NS.usdRate())}</b><small><button class="link-btn" data-go="settings">изменить →</button></small></div>
+        <div class="kpi kpi--gold"><span>Сегодня</span><b>${money(today.netRevenue)}</b><small>выручка · ${today.paidOrders} ${plural(today.paidOrders, 'оплата', 'оплаты', 'оплат')} · прибыль ${money(today.gross)}</small></div>
+        <div class="kpi"><span>Этот месяц</span><b>${money(month.netRevenue)}</b><small>валовая прибыль ${money(month.gross)}</small></div>
+        <div class="kpi"><span>Чистая прибыль за месяц</span><b class="${month.net >= 0 ? 'money-in' : 'money-out'}">${month.net < 0 ? '−' : ''}${money(Math.abs(month.net))}</b><small>после расходов <button class="link-btn" data-go="finance">отчёт →</button></small></div>
+        <div class="kpi"><span>Не оплачено</span><b>${money(unpaid.reduce((a, o) => a + o.total, 0))}</b><small>${unpaid.length} заказов</small></div>
+        <div class="kpi"><span>Склад</span><b>${units} шт.</b><small>${prods.length} товаров · по закупке ${money(stockValue)}</small></div>
         <div class="kpi kpi--gold"><span>Касса</span><b>${money(cashOnHand())}</b><small><button class="link-btn" data-go="finance" style="color:#ead7a6">учёт и отчёты →</button></small></div>
       </div>
 
       <div class="panels">
         <div>
           <div class="panel">
-            <div class="panel__head"><h2>Продажи за 14 дней</h2><span class="muted">${money(days.reduce((a, d) => a + d.sum, 0))}</span></div>
-            <svg class="chart" viewBox="0 0 ${W} ${H}">
+            <div class="panel__head"><h2>Оплаченные продажи за 14 дней</h2><span class="muted">${money(days.reduce((a, d) => a + d.sum, 0))}</span></div>
+            ${days.some((d) => d.sum) ? `<svg class="chart" viewBox="0 0 ${W} ${H}">
               <defs><linearGradient id="bar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d6b25e"/><stop offset="1" stop-color="#8a6a1f"/></linearGradient></defs>
               ${days.map((d, i) => {
                 const h = Math.max(2, (d.sum / max) * (H - 40));
@@ -270,7 +312,7 @@
                 return `<rect x="${i * bw + 7}" y="${H - 22 - h}" width="${bw - 14}" height="${h}" rx="4" fill="url(#bar)"><title>${date.toLocaleDateString('ru-RU')}: ${money(d.sum)} (${d.n} зак.)</title></rect>
                   <text x="${i * bw + bw / 2}" y="${H - 6}" text-anchor="middle">${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')}</text>`;
               }).join('')}
-            </svg>
+            </svg>` : '<p class="muted">Оплаченных продаж за последние 14 дней пока нет.</p>'}
           </div>
           <div class="panel">
             <div class="panel__head"><h2>Последние заказы</h2><button class="link-btn" data-go="orders">Все заказы →</button></div>
@@ -279,16 +321,16 @@
         </div>
         <div>
           <div class="panel">
-            <div class="panel__head"><h2>Бестселлеры</h2></div>
-            <table class="atable"><tbody>
-              ${top.map((p) => `<tr><td><img class="thumb" src="${esc(NS.image(p, 0))}" alt=""></td><td class="name">${esc(p.name)}<div class="sub">${esc(NS.catName(p.category))}</div></td><td class="num">${p.sold} шт.</td></tr>`).join('')}
-            </tbody></table>
-          </div>
-          <div class="panel">
             <div class="panel__head"><h2>Нужно пополнить</h2></div>
             ${low.length ? `<table class="atable"><tbody>
-              ${low.slice(0, 8).map((p) => `<tr><td class="name">${esc(p.name)}<div class="sub">${esc(p.sku)}</div></td><td class="num ${NS.totalStock(p) ? 'stock-low' : 'stock-zero'}">${NS.totalStock(p)} шт.</td><td><button class="link-btn" data-edit="${p.id}">Изменить</button></td></tr>`).join('')}
-            </tbody></table>` : '<p class="muted">Все товары в достаточном количестве.</p>'}
+              ${low.slice(0, 8).map((p) => `<tr><td class="name">${esc(p.name)}<div class="sub">${esc(p.sku)}</div></td><td class="num ${NS.totalStock(p) ? 'stock-low' : 'stock-zero'}">${NS.totalStock(p)} шт.</td><td><button class="link-btn" data-stock-for="${p.id}">Поступление</button></td></tr>`).join('')}
+            </tbody></table>` : `<p class="muted">${prods.length ? 'Все товары в достаточном количестве.' : 'Товаров пока нет.'}</p>`}
+          </div>
+          <div class="panel">
+            <div class="panel__head"><h2>Бестселлеры</h2></div>
+            ${top.length ? `<table class="atable"><tbody>
+              ${top.map((p) => `<tr><td><img class="thumb" src="${esc(NS.image(p, 0))}" alt=""></td><td class="name">${esc(p.name)}<div class="sub">${esc(NS.catName(p.category))}</div></td><td class="num">${p.sold} шт.</td></tr>`).join('')}
+            </tbody></table>` : '<p class="muted">Появятся после первых продаж.</p>'}
           </div>
         </div>
       </div>`;
@@ -328,15 +370,15 @@
     ];
 
     $('#topbarActions').innerHTML = `
-      <button class="btn btn--outline" data-stock-in>Приход на склад</button>
-      <button class="btn btn--outline" data-store-sale>Продажа в магазине</button>
+      <button class="btn btn--outline" data-stock-in>Поступление / списание</button>
+      <button class="btn btn--outline" data-store-sale>Продажа / заказ вручную</button>
       <button class="btn btn--dark" data-new>+ Добавить товар</button>`;
 
     view.innerHTML = `
       <div class="prod-hero">
         <div>
           <h2 class="prod-hero__title">Товары и склад</h2>
-          <p class="prod-hero__text">Каталог сайта и витрины магазина в одном месте. Продали с витрины — нажмите <b>Продажа в магазине</b>: остаток спишется, деньги попадут в кассу и отчёты.</p>
+          <p class="prod-hero__text">Каталог сайта и витрины магазина в одном месте. Продали с полки или приняли заказ по телефону — нажмите <b>Продажа / заказ вручную</b>: товар спишется со склада, деньги попадут в отчёты.</p>
         </div>
       </div>
 
@@ -348,11 +390,17 @@
         <div class="kpi"><span>Сайт</span><b>${money(onlineSum)}</b><small>${onlineSales.length} заказов онлайн</small></div>
       </div>
 
-      <div class="prod-card">
+      <div class="fin-tabs" style="margin-bottom:14px">
+        <button type="button" class="fin-tab ${st.tab !== 'moves' ? 'is-on' : ''}" data-ptab="list">Товары</button>
+        <button type="button" class="fin-tab ${st.tab === 'moves' ? 'is-on' : ''}" data-ptab="moves">Журнал склада</button>
+      </div>
+      ${st.tab === 'moves' ? movesHTML() : `
+      ${!prods.length ? `<div class="empty-state"><h3>Каталог пока пуст</h3><p>Добавьте первый товар: фото, цену, цвета и остатки по размерам.</p><button class="btn btn--dark" data-new>+ Добавить товар</button></div>` : ''}
+      <div class="prod-card" ${prods.length ? '' : 'hidden'}>
         <div class="prod-card__label">Поиск и фильтры</div>
         <div class="prod-filters">
           <label class="prod-field prod-field--grow"><span>Поиск</span>
-            <input class="input" type="search" id="prodSearch" placeholder="Название или артикул…" value="${esc(st.q)}" data-pf="q">
+            <input class="input" type="search" id="prodSearch" placeholder="Название, артикул или бренд…" value="${esc(st.q)}" data-pf="q">
           </label>
           <label class="prod-field"><span>Категория</span>
             <select class="select" data-pf="cat"><option value="">Все категории</option>${NS.CATEGORIES.map((c) => `<option value="${esc(c.id)}" ${st.cat === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
@@ -366,8 +414,8 @@
         </div>
       </div>
 
-      <div id="pTable"></div>
-      <p class="prod-help">Сайт и магазин делят один склад. Онлайн-заказ списывает размер при оформлении. Продажа в магазине сразу ставит статус «Доставлен» и идёт в Финансы. Приход на склад увеличивает остаток; если указать сумму закупки — она запишется в расходы.</p>`;
+      <div id="pTable" ${prods.length ? '' : 'hidden'}></div>
+      <p class="prod-help">Сайт и магазин делят один склад. Заказ на сайте сразу резервирует товар (цвет и размер). Отмена или возврат возвращают товар на склад — ровно один раз. Каждое изменение остатка видно во вкладке «Журнал склада».</p>`}`;
     renderProductsTable();
     const search = $('#prodSearch');
     if (search && st._keepFocus) {
@@ -381,7 +429,7 @@
     const st = ui.products;
     const q = st.q.trim().toLowerCase();
     const list = NS.products().filter((p) => {
-      if (q && !(p.name + ' ' + p.sku).toLowerCase().includes(q)) return false;
+      if (q && !(p.name + ' ' + p.sku + ' ' + (p.brand || '')).toLowerCase().includes(q)) return false;
       if (st.cat && p.category !== st.cat) return false;
       const stock = NS.totalStock(p);
       switch (st.filter) {
@@ -442,15 +490,16 @@
             const flashOver = NS.inFlash(p) && d > (+p.discount || 0);
             const photos = (p.images || []).length;
             const sizes = NS.SIZES.filter((sz) => +(p.stock && p.stock[sz]) > 0).map((sz) => sz + ':' + p.stock[sz]).join(' · ');
+            const vtitle = Object.keys(p.vstock || {}).filter((k) => +p.vstock[k] > 0).map((k) => k.replace('|', ' ') + ': ' + p.vstock[k]).join('\n');
             return `<tr class="${p.visible ? '' : 'is-hidden'}">
               <td><input type="checkbox" data-sel="${p.id}" ${st.sel.has(p.id) ? 'checked' : ''}></td>
               <td><img class="thumb" src="${esc(NS.image(p, 0))}" alt=""></td>
-              <td class="name">${esc(p.name)}<div class="sub">${esc(p.sku)} · ${photos ? photos + ' фото' : 'без фото'}${p.isNew ? ' · Новинка' : ''}${p.isHit ? ' · Хит' : ''}</div></td>
+              <td class="name">${esc(p.name)}<div class="sub">${esc(p.sku)}${p.brand ? ' · ' + esc(p.brand) : ''} · ${photos ? photos + ' фото' : 'без фото'}${p.isNew ? ' · Новинка' : ''}${p.isHit ? ' · Хит' : ''}</div></td>
               <td>${esc(NS.catName(p.category))}</td>
-              <td class="num"><input class="mini-input mini-input--price" type="number" min="1000" step="1000" value="${p.price}" data-price="${p.id}" aria-label="Цена, сум"><div class="sub">≈ ${usd(p.price)}</div></td>
+              <td class="num"><input class="mini-input mini-input--price" type="number" min="1000" step="1000" value="${p.price}" data-price="${p.id}" aria-label="Цена, сум"><div class="sub">${p.cost ? 'закупка ' + money(p.cost) : '<span style="color:var(--sale)">нет закупочной цены</span>'}</div></td>
               <td><input class="mini-input" type="number" min="0" max="90" value="${+p.discount || 0}" data-disc="${p.id}" aria-label="Скидка, %"> %</td>
               <td class="num ${d ? 'tag-sale' : ''}">${money(NS.finalPrice(p))}<div class="sub">≈ ${usd(NS.finalPrice(p))}${flashOver ? ` · акция −${d}%` : ''}</div></td>
-              <td class="num ${stock === 0 ? 'stock-zero' : stock <= 3 ? 'stock-low' : ''}" title="${esc(sizes)}">${stock}<div class="sub">${sizes || '—'}</div></td>
+              <td class="num ${stock === 0 ? 'stock-zero' : stock <= 3 ? 'stock-low' : ''}" title="${esc(vtitle || sizes)}">${stock}<div class="sub">${sizes || '—'}</div></td>
               <td class="num">${p.sold}</td>
               <td><label class="switch"><input type="checkbox" data-vis="${p.id}" ${p.visible ? 'checked' : ''}><span></span></label></td>
               <td><div class="row-actions">
@@ -458,6 +507,7 @@
                 <button data-edit="${p.id}" title="Редактировать">${ICONS.edit}</button>
                 <a href="/#/product/${p.id}" target="_blank" rel="noopener" title="Открыть на сайте" class="row-actions-link"><button tabindex="-1">${ICONS.ext}</button></a>
                 <button data-dup="${p.id}" title="Дублировать">${ICONS.copy}</button>
+                <button data-moves="${p.id}" title="Движения склада">${ICONS.eye}</button>
                 <button data-del="${p.id}" title="Удалить">${ICONS.trash}</button>
               </div></td>
             </tr>`;
@@ -467,69 +517,191 @@
       <p class="muted" style="margin-top:12px;font-size:13px">Показано ${list.length} из ${NS.products().length}. Цену и скидку меняйте в таблице — сохраняется сразу. Кнопка «Витрина» — быстрая продажа с полки.</p>`;
   }
 
+
+  function movesHTML() {
+    const st = ui.products;
+    const moves = NS.db.stockMoves || [];
+    const types = { sale: 'Продажа', cancel: 'Отмена заказа', return: 'Возврат', receipt: 'Поступление', writeoff: 'Списание', adjust: 'Корректировка', initial: 'Начальный остаток', restock: 'Повторное списание' };
+    const q = (st.mq || '').trim().toLowerCase();
+    const list = moves.filter((m) => (!st.mtype || m.type === st.mtype)
+      && (!q || [m.productName, m.variant, m.reason, m.ref].join(' ').toLowerCase().includes(q)));
+    return `<div class="prod-card"><div class="prod-filters">
+        <label class="prod-field prod-field--grow"><span>Поиск</span><input class="input" type="search" id="movesSearch" placeholder="Товар, причина, номер заказа…" value="${esc(st.mq)}" data-mq></label>
+        <label class="prod-field"><span>Тип</span><select class="select" data-mtype><option value="">Все</option>${Object.keys(types).map((k) => `<option value="${k}" ${st.mtype === k ? 'selected' : ''}>${types[k]}</option>`).join('')}</select></label>
+      </div></div>
+      <div class="panel" style="padding:8px">
+      ${list.length ? `<div class="table-wrap" style="border:0"><table class="atable">
+        <thead><tr><th>Когда</th><th>Товар</th><th>Цвет · размер</th><th>Изменение</th><th>Стало</th><th>Тип</th><th>Причина</th></tr></thead>
+        <tbody>${list.slice(0, 300).map((m) => {
+          const [c, sz] = NS.splitKey(m.variant);
+          return `<tr><td>${fmtDate(m.at, true)}</td><td class="name">${esc(m.productName || m.productId)}</td><td>${esc([c, sz].filter(Boolean).join(' · '))}</td>
+          <td class="num ${m.delta > 0 ? 'mv-in' : 'mv-out'}">${m.delta > 0 ? '+' : ''}${m.delta}</td><td class="num">${m.qtyAfter}</td>
+          <td>${esc(types[m.type] || m.type)}</td><td class="name">${esc(m.reason || '')}${m.ref ? ` <button class="link-btn" data-order="${esc(m.ref)}">${esc(m.ref)}</button>` : ''}</td></tr>`;
+        }).join('')}</tbody></table></div>
+        <p class="muted" style="font-size:12.5px;margin:8px">Показано ${Math.min(300, list.length)} из ${list.length}. Журнал не редактируется — ошибки исправляются новой корректировкой.</p>` : '<p class="muted" style="padding:16px">Движений склада пока нет. Они появятся после поступления, продажи или корректировки.</p>'}
+      </div>`;
+  }
+
+  /* Продажа в магазине или заказ по телефону: несколько товаров, цвет, размер, оплата и статус */
   function openStoreSaleForm(prefillId) {
     const products = NS.products().filter((p) => NS.totalStock(p) > 0);
-    if (!products.length) return toast('Нет товаров с остатком — сначала сделайте приход на склад', 'error');
+    if (!products.length) return toast('Нет товаров с остатком — сначала сделайте поступление на склад', 'error');
     const pre = prefillId ? NS.product(prefillId) : null;
     const first = pre && NS.totalStock(pre) > 0 ? pre : products[0];
-    const sizeOpts = (p) => NS.SIZES.filter((sz) => +(p.stock && p.stock[sz]) > 0)
-      .map((sz) => `<option value="${esc(sz)}">${esc(sz)} — ${p.stock[sz]} шт.</option>`).join('');
-    openModal(`<h2>Продажа в магазине</h2>
-      <p class="hint" style="margin-top:-6px">Спишет размер со склада и запишет выручку в кассу / финансы как «Доставлен». Подходит для продажи с витрины.</p>
+    const optsFor = (p) => {
+      const out = [];
+      (p.colors.length ? p.colors : ['']).forEach((c) => NS.SIZES.forEach((sz) => {
+        const n = NS.variantStock(p, c, sz);
+        if (n > 0) out.push(`<option value="${esc(NS.vkey(c, sz))}">${esc([c, sz].filter(Boolean).join(' · '))} — ${n} шт.</option>`);
+      }));
+      return out.join('');
+    };
+    const lineHTML = (p) => `<div class="sale-line">
+        <div class="field"><label>Товар</label><select class="input" data-sl="product">${products.map((x) => `<option value="${esc(x.id)}" ${x.id === p.id ? 'selected' : ''}>${esc(x.name)} · ${esc(x.sku)}</option>`).join('')}</select></div>
+        <div class="field"><label>Цвет · размер</label><select class="input" data-sl="variant">${optsFor(p)}</select></div>
+        <div class="field"><label>Цена, сум</label><input class="input" type="number" min="0" step="1000" data-sl="price" value="${NS.finalPrice(p)}"></div>
+        <div class="field"><label>Кол-во</label><input class="input" type="number" min="1" data-sl="qty" value="1"></div>
+        <div class="field"><label>Сумма</label><input class="input" data-sl="sum" value="${money(NS.finalPrice(p))}" readonly tabindex="-1"></div>
+        <button type="button" class="icon-btn" data-sl-del title="Убрать строку">${ICONS.trash}</button>
+      </div>`;
+    openModal(`<h2>Продажа или заказ вручную</h2>
+      <p class="hint" style="margin-top:-6px">Для продажи с полки магазина или заказа, принятого по телефону. Товар списывается со склада сразу, деньги попадают в отчёты, когда заказ отмечен оплаченным.</p>
       <form id="storeSaleForm" class="form-grid">
-        <div class="field full"><label>Товар</label>
-          <select class="input" name="productId">${products.map((p) => `<option value="${esc(p.id)}" ${p.id === first.id ? 'selected' : ''}>${esc(p.name)} · ${NS.totalStock(p)} шт. · ${money(NS.finalPrice(p))}</option>`).join('')}</select>
+        <div class="field full"><label>Что оформляем</label>
+          <div class="fin-seg" role="group">
+            <button type="button" class="fin-seg__btn is-on" data-channel="store">Продажа в магазине</button>
+            <button type="button" class="fin-seg__btn" data-channel="phone">Заказ по телефону</button>
+          </div>
         </div>
-        <div class="field"><label>Размер</label><select class="input" name="size">${sizeOpts(first)}</select></div>
-        <div class="field"><label>Количество</label><input class="input" type="number" min="1" name="qty" value="1"></div>
-        <div class="field"><label>Цена за шт., сум</label><input class="input" type="number" min="0" step="1000" name="price" value="${NS.finalPrice(first)}"></div>
-        <div class="field"><label>Оплата</label>
+        <div class="full sale-lines" id="saleLines">${lineHTML(first)}</div>
+        <div class="full"><button type="button" class="btn btn--outline" data-sl-add style="height:40px">+ Ещё товар</button></div>
+        <div class="field"><label>Скидка на весь заказ, сум</label><input class="input" type="number" min="0" step="1000" name="discount" value="0"></div>
+        <div class="field" data-phone-only hidden><label>Доставка, сум</label><input class="input" type="number" min="0" step="1000" name="shipping" value="0"></div>
+        <div class="field"><label>Способ оплаты</label>
           <select class="input" name="payment">
-            <option>Наличные в магазине</option>
-            <option>Карта в магазине</option>
-            <option>Click</option>
-            <option>Payme</option>
-            <option>Перевод</option>
+            <option>Наличные в магазине</option><option>Карта в магазине</option><option>Click</option><option>Payme</option><option>Перевод</option><option>При получении</option>
           </select>
         </div>
-        <div class="field"><label>Имя клиента (необязательно)</label><input class="input" name="customerName" placeholder="Покупатель в магазине"></div>
-        <div class="field full"><label>Комментарий</label><input class="input" name="note" placeholder="Например: витрина, примерка"></div>
+        <label class="toggle-row">Оплачено<span class="switch"><input type="checkbox" name="paid" checked><span></span></span></label>
+        <div class="field" data-phone-only hidden><label>Статус</label><select class="input" name="status">${NS.ORDER_STATUSES.filter((x) => !NS.STOCK_FREE_STATUSES.includes(x)).map((x) => `<option ${x === 'Подтверждён' ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+        <div class="field"><label>Имя клиента</label><input class="input" name="customerName" placeholder="необязательно в магазине"></div>
+        <div class="field"><label>Телефон</label><input class="input" name="customerPhone" placeholder="+998 …"></div>
+        <div class="field full" data-phone-only hidden><label>Адрес доставки</label><input class="input" name="address"></div>
+        <div class="field full"><label>Комментарий</label><input class="input" name="note" placeholder="Например: примерка, подарочная упаковка"></div>
+        <div class="full" id="saleTotal" style="font-size:16px"></div>
         <div class="full form-actions">
           <button type="button" class="btn btn--outline" data-close>Отмена</button>
-          <button type="submit" class="btn btn--dark">Продать и списать со склада</button>
+          <button type="submit" class="btn btn--dark">Оформить и списать со склада</button>
         </div>
       </form>`);
     const form = $('#storeSaleForm');
-    const syncSizes = () => {
-      const p = NS.product(form.productId.value);
-      if (!p) return;
-      form.size.innerHTML = sizeOpts(p) || '<option value="">Нет размеров</option>';
-      form.price.value = NS.finalPrice(p);
+    form.dataset.channel = 'store';
+    const recalc = () => {
+      let sum = 0;
+      $$('.sale-line', form).forEach((row) => {
+        const v = Math.max(0, +$('[data-sl="price"]', row).value || 0) * Math.max(1, +$('[data-sl="qty"]', row).value || 1);
+        $('[data-sl="sum"]', row).value = money(v);
+        sum += v;
+      });
+      const total = Math.max(0, sum - (+form.discount.value || 0)) + (form.dataset.channel === 'phone' ? +form.shipping.value || 0 : 0);
+      $('#saleTotal').innerHTML = `Итого к оплате: <b>${money(total)}</b>`;
     };
-    form.productId.addEventListener('change', syncSizes);
+    form.addEventListener('input', recalc);
+    form.addEventListener('change', (e) => {
+      if (e.target.dataset.sl === 'product') {
+        const row = e.target.closest('.sale-line');
+        const p = NS.product(e.target.value);
+        $('[data-sl="variant"]', row).innerHTML = optsFor(p) || '<option value="">Нет остатка</option>';
+        $('[data-sl="price"]', row).value = NS.finalPrice(p);
+      }
+      recalc();
+    });
+    form.addEventListener('click', (e) => {
+      const ch = e.target.closest('[data-channel]');
+      if (ch) {
+        form.dataset.channel = ch.dataset.channel;
+        $$('[data-channel]', form).forEach((b) => b.classList.toggle('is-on', b === ch));
+        $$('[data-phone-only]', form).forEach((x) => { x.hidden = ch.dataset.channel !== 'phone'; });
+        form.paid.checked = ch.dataset.channel === 'store';
+        form.payment.value = ch.dataset.channel === 'store' ? 'Наличные в магазине' : 'При получении';
+        recalc();
+      }
+      if (e.target.closest('[data-sl-add]')) { $('#saleLines').insertAdjacentHTML('beforeend', lineHTML(products[0])); recalc(); }
+      const del = e.target.closest('[data-sl-del]');
+      if (del && $$('.sale-line', form).length > 1) { del.closest('.sale-line').remove(); recalc(); }
+    });
+    recalc();
   }
 
-  function openStockInForm() {
+
+  /* Поступление, списание или точный пересчёт по всем цветам и размерам одного товара */
+  function openStockInForm(prefillId, mode) {
     const products = NS.products();
     if (!products.length) return toast('Сначала добавьте товар', 'error');
-    const first = products[0];
-    openModal(`<h2>Приход на склад</h2>
-      <p class="hint" style="margin-top:-6px">Новая партия пришла в магазин. Увеличит остаток. Если укажете сумму закупки — она уйдёт в расходы (Финансы).</p>
-      <form id="stockMoveForm" class="form-grid" data-mode="in">
+    let p = (prefillId && NS.product(prefillId)) || products[0];
+    mode = mode || 'in';
+    const titles = { in: 'Поступление товара', out: 'Списание', set: 'Пересчёт остатка' };
+    const hints = {
+      in: 'Новая партия пришла на склад. Впишите, сколько штук каждого цвета и размера пришло.',
+      out: 'Брак, утеря, порча или подарок. Впишите, сколько штук убрать. Причина обязательна.',
+      set: 'Пересчитали товар на складе? Впишите фактическое количество — система сама посчитает разницу. Причина обязательна.',
+    };
+    const grid = () => {
+      const rows = p.colors.length ? p.colors : [''];
+      return `<div class="table-wrap vgrid-wrap"><table class="vgrid"><thead><tr><th>Цвет</th>${NS.SIZES.map((sz) => `<th>${esc(sz)}</th>`).join('')}</tr></thead>
+        <tbody>${rows.map((c) => `<tr><td class="vgrid__color">${c ? `<i style="background:${NS.colorHex(c)}"></i>${esc(c)}` : 'Без цвета'}</td>
+          ${NS.SIZES.map((sz) => { const n = NS.variantStock(p, c, sz); return `<td><input type="number" min="0" inputmode="numeric" data-mv="${esc(NS.vkey(c, sz))}" placeholder="${mode === 'set' ? n : '0'}" ${mode === 'set' ? `value="${n}"` : ''}><div class="sub">сейчас ${n}</div></td>`; }).join('')}</tr>`).join('')}</tbody></table></div>`;
+    };
+    openModal(`<h2 id="mvTitle">${titles[mode]}</h2>
+      <form id="stockMoveForm" class="form-grid">
+        <div class="field full"><div class="fin-seg" role="group">
+          ${Object.keys(titles).map((k) => `<button type="button" class="fin-seg__btn ${k === mode ? 'is-on' : ''}" data-mvmode="${k}">${{ in: 'Поступление', out: 'Списание', set: 'Пересчёт' }[k]}</button>`).join('')}
+        </div><p class="hint" id="mvHint" style="margin:8px 0 0">${hints[mode]}</p></div>
         <div class="field full"><label>Товар</label>
-          <select class="input" name="productId">${products.map((p) => `<option value="${esc(p.id)}">${esc(p.name)} · сейчас ${NS.totalStock(p)} шт.</option>`).join('')}</select>
+          <select class="input" name="productId">${products.map((x) => `<option value="${esc(x.id)}" ${x.id === p.id ? 'selected' : ''}>${esc(x.name)} · ${esc(x.sku)} · сейчас ${NS.totalStock(x)} шт.</option>`).join('')}</select>
         </div>
-        <div class="field"><label>Размер</label>
-          <select class="input" name="size">${NS.SIZES.map((sz) => `<option>${esc(sz)}</option>`).join('')}</select>
-        </div>
-        <div class="field"><label>Сколько пришло, шт.</label><input class="input" type="number" min="1" name="qty" value="1"></div>
-        <div class="field full"><label>Сумма закупки, сум (0 — только склад, без расхода)</label><input class="input" type="number" min="0" step="1000" name="cost" value="0" placeholder="0"></div>
-        <div class="field full"><label>Комментарий</label><input class="input" name="note" placeholder="Поставщик, накладная…"></div>
+        <div class="full" id="mvGrid">${grid()}</div>
+        <div class="field" data-in-only ${mode === 'in' ? '' : 'hidden'}><label>Закупочная цена за 1 шт., сум</label><input class="input" type="number" min="0" step="1000" name="unitCost" value="${+p.cost || ''}" placeholder="0"></div>
+        <label class="toggle-row" data-in-only ${mode === 'in' ? '' : 'hidden'}>Записать оплату поставщику в расходы<span class="switch"><input type="checkbox" name="recordExpense" checked><span></span></span></label>
+        <div class="field full"><label id="mvReasonLabel">${mode === 'in' ? 'Комментарий (поставщик, накладная)' : 'Причина *'}</label><input class="input" name="reason" placeholder="${mode === 'in' ? 'Например: поставщик Ali, накладная 15' : 'Например: брак, пересчёт склада'}"></div>
+        <div class="full" id="mvTotal"></div>
         <div class="full form-actions">
           <button type="button" class="btn btn--outline" data-close>Отмена</button>
-          <button type="submit" class="btn btn--dark">Оприходовать</button>
+          <button type="submit" class="btn btn--dark">Записать</button>
         </div>
       </form>`);
+    const form = $('#stockMoveForm');
+    form.dataset.mode = mode;
+    const recalc = () => {
+      let qty = 0;
+      $$('[data-mv]', form).forEach((i) => {
+        const v = Math.max(0, Math.round(+i.value || 0));
+        if (form.dataset.mode === 'set') { if (i.value !== '') { const [c, sz] = NS.splitKey(i.dataset.mv); qty += Math.abs(v - NS.variantStock(p, c, sz)); } } else qty += v;
+      });
+      const cost = +form.unitCost.value || 0;
+      $('#mvTotal').innerHTML = form.dataset.mode === 'in'
+        ? `Пришло: <b>${qty} шт.</b>${cost ? ` · сумма закупки <b>${money(qty * cost)}</b>` : ''}`
+        : form.dataset.mode === 'out' ? `Списать: <b>${qty} шт.</b>` : `Изменится: <b>${qty} шт.</b>`;
+    };
+    form.addEventListener('input', recalc);
+    form.addEventListener('change', (e) => {
+      if (e.target.name === 'productId') { p = NS.product(e.target.value); $('#mvGrid').innerHTML = grid(); form.unitCost.value = +p.cost || ''; }
+      recalc();
+    });
+    form.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-mvmode]');
+      if (!b) return;
+      mode = b.dataset.mvmode;
+      form.dataset.mode = mode;
+      $$('[data-mvmode]', form).forEach((x) => x.classList.toggle('is-on', x === b));
+      $('#mvTitle').textContent = titles[mode];
+      $('#mvHint').textContent = hints[mode];
+      $$('[data-in-only]', form).forEach((x) => { x.hidden = mode !== 'in'; });
+      $('#mvReasonLabel').textContent = mode === 'in' ? 'Комментарий (поставщик, накладная)' : 'Причина *';
+      $('#mvGrid').innerHTML = grid();
+      recalc();
+    });
+    recalc();
   }
 
 
@@ -592,20 +764,21 @@
     if (src) {
       draft = JSON.parse(JSON.stringify(src));
       if (duplicate) {
-        Object.assign(draft, { id: NS.newId('p'), sku: 'NS-' + nextNum, name: draft.name + ' (копия)', sold: 0, reviews: 0, createdAt: Date.now() });
+        Object.assign(draft, { id: NS.newId('p'), sku: 'NS-' + nextNum, name: draft.name + ' (копия)', sold: 0, reviews: 0, createdAt: Date.now(), vstock: {} });
       }
     } else {
       const firstCat = NS.CATEGORIES[0] ? NS.CATEGORIES[0].id : 'evening';
       const firstColor = Object.keys(NS.COLORS)[0] || 'Чёрный';
       draft = {
-        id: NS.newId('p'), sku: 'NS-' + nextNum, name: '', category: firstCat, price: 1500000, discount: 0,
-        colors: [firstColor], stock: Object.fromEntries(NS.SIZES.map((sz, i) => [sz, [0, 5, 5, 5, 2, 0][i] ?? 3])), variant: 1, fabric: 'Шёлк',
+        id: NS.newId('p'), sku: 'NS-' + nextNum, name: '', brand: (NS.brand().short || ''), category: firstCat, price: 0, cost: 0, discount: 0,
+        colors: [firstColor], vstock: {}, stock: {}, variant: 1, fabric: '',
         description: '', images: [], isNew: true, isHit: false, visible: true, sold: 0, rating: 5, reviews: 0, createdAt: Date.now(),
       };
     }
     const isEdit = !!src && !duplicate;
-    NS.SIZES.forEach((s) => { if (!(s in draft.stock)) draft.stock[s] = 0; });
+    if (!draft.vstock) draft.vstock = {};
     draft.images = draft.images || [];
+    const origV = JSON.stringify(draft.vstock);
     const p = draft;
     let uploading = 0;
 
@@ -625,6 +798,7 @@
           <div class="form-grid">
             <div class="field full"><label>Название *</label><input class="input" name="title" value="${esc(p.name)}" placeholder="Платье «…»" required></div>
             <div class="field"><label>Артикул *</label><input class="input" name="sku" value="${esc(p.sku)}"></div>
+            <div class="field"><label>Бренд</label><input class="input" name="brand" value="${esc(p.brand || '')}" list="brands" placeholder="Например: ${esc(NS.brand().short)}"><datalist id="brands">${[...new Set(NS.products().map((x) => x.brand).filter(Boolean))].map((b) => `<option value="${esc(b)}">`).join('')}</datalist></div>
             <div class="field"><label>Категория</label><select class="input" name="category">${NS.CATEGORIES.map((c) => `<option value="${esc(c.id)}" ${p.category === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>
             <div class="field"><label>Ткань</label><input class="input" name="fabric" value="${esc(p.fabric)}" list="fabrics"><datalist id="fabrics">${NS.FABRICS.map((f) => `<option value="${esc(f)}">`).join('')}</datalist></div>
             <div class="field"><label>Силуэт (иллюстрация, если нет фото)</label><select class="input" name="variant">${NS.SILHOUETTES.map((s, i) => `<option value="${i}" ${+p.variant === i ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></div>
@@ -633,7 +807,8 @@
 
           <h3>Цена и скидка</h3>
           <div class="form-grid">
-            <div class="field"><label>Цена, сум *</label><input class="input" type="number" min="0" step="1000" name="price" value="${p.price}"></div>
+            <div class="field"><label>Закупочная цена за 1 шт., сум</label><input class="input" type="number" min="0" step="1000" name="cost" value="${+p.cost || 0}"><small class="muted">Видите только вы. Нужна для расчёта прибыли.</small></div>
+            <div class="field"><label>Цена продажи, сум *</label><input class="input" type="number" min="0" step="1000" name="price" value="${p.price}"></div>
             <div class="field"><label>или цена в $ (пересчитается в сумы)</label><input class="input" type="number" min="0" step="1" name="priceUsd" value="${Math.round(p.price / NS.usdRate())}"></div>
             <div class="field"><label>Скидка, %</label><input class="input" type="number" min="0" max="90" name="discount" value="${+p.discount || 0}"></div>
           </div>
@@ -642,8 +817,10 @@
           <h3>Цвета</h3>
           <div class="color-picks">${Object.keys(NS.COLORS).map((c) => `<label class="color-pick"><input type="checkbox" name="colors" value="${esc(c)}" ${p.colors.includes(c) ? 'checked' : ''}><i style="background:${NS.COLORS[c]}"></i>${esc(c)}</label>`).join('')}</div>
 
-          <h3>Остатки по размерам</h3>
-          <div class="stock-grid">${NS.SIZES.map((s) => `<label>${s}<input type="number" min="0" name="stock_${s}" value="${+p.stock[s] || 0}"></label>`).join('')}</div>
+          <h3>Остатки по цвету и размеру</h3>
+          <p class="muted" style="font-size:12.5px;margin:-4px 0 10px">Сколько штук каждого цвета и размера лежит на складе. Пустая клетка = 0. Новые поступления удобнее вносить кнопкой «Поступление».</p>
+          <div id="vGrid"></div>
+          ${isEdit ? `<div class="field" id="reasonBox" hidden style="margin-top:10px"><label>Причина изменения остатка *</label><input class="input" name="reason" placeholder="Например: пересчёт склада, найден брак, ошибка ввода"></div>` : ''}
 
           <h3>Отметки</h3>
           <div class="flags">
@@ -665,6 +842,8 @@
       const f = form.elements;
       p.name = f.title.value.trim();
       p.sku = f.sku.value.trim();
+      p.brand = f.brand.value.trim();
+      p.cost = Math.max(0, Math.round(+f.cost.value || 0));
       p.category = f.category.value;
       p.fabric = f.fabric.value.trim();
       p.variant = +f.variant.value;
@@ -672,17 +851,42 @@
       p.price = Math.max(0, Math.round(+f.price.value || 0));
       p.discount = Math.min(90, Math.max(0, Math.round(+f.discount.value || 0)));
       p.colors = $$('input[name="colors"]:checked', form).map((i) => i.value);
-      NS.SIZES.forEach((s) => { p.stock[s] = Math.max(0, Math.round(+f['stock_' + s].value || 0)); });
+      $$('[data-v]', form).forEach((inp) => { p.vstock[inp.dataset.v] = Math.max(0, Math.round(+inp.value || 0)); });
+      $$('#vGrid tbody tr', form).forEach((tr) => {
+        const cell = tr.querySelector('td:last-child b');
+        if (cell) cell.textContent = $$('[data-v]', tr).reduce((a, i) => a + Math.max(0, Math.round(+i.value || 0)), 0);
+      });
+      NS.normalizeStock(p, NS.SIZES);
+      const rb = $('#reasonBox');
+      if (rb) rb.hidden = JSON.stringify(p.vstock) === origV;
       p.visible = f.visible.checked;
       p.isNew = f.isNew.checked;
       p.isHit = f.isHit.checked;
       const shown = p.colors.length ? p : Object.assign({}, p, { colors: [Object.keys(NS.COLORS)[0]] });
       $('#pPreview').innerHTML = previewCard(shown);
       const d = NS.discountOf(shown);
-      $('#calc').innerHTML = d
-        ? `Цена на сайте: <b>${money(NS.finalPrice(shown))}</b> (≈ ${usd(NS.finalPrice(shown))}) вместо ${money(p.price)} — −${d}%${NS.inFlash(shown) && d > p.discount ? ', действует общая акция' : ''}. Остаток: ${NS.totalStock(p)} шт.`
-        : `Цена на сайте: <b>${money(p.price)}</b> (≈ ${usd(p.price)}). Остаток: ${NS.totalStock(p)} шт.`;
+      const fp = NS.finalPrice(shown);
+      const marginTxt = p.cost > 0 && fp > 0 ? ` Прибыль с 1 шт.: <b class="${fp - p.cost >= 0 ? 'money-in' : 'money-out'}">${money(fp - p.cost)}</b> (${Math.round(((fp - p.cost) / fp) * 100)}%).` : (p.cost ? '' : ' Укажите закупочную цену, чтобы видеть прибыль.');
+      $('#calc').innerHTML = (d
+        ? `Цена на сайте: <b>${money(fp)}</b> (≈ ${usd(fp)}) вместо ${money(p.price)} — −${d}%${NS.inFlash(shown) && d > p.discount ? ', действует общая акция' : ''}. Остаток: ${NS.totalStock(p)} шт.`
+        : `Цена на сайте: <b>${money(p.price)}</b> (≈ ${usd(p.price)}). Остаток: ${NS.totalStock(p)} шт.`) + marginTxt;
     };
+    // таблица остатков: строки — выбранные цвета, столбцы — размеры
+    const renderGrid = () => {
+      const colors = $$('input[name="colors"]:checked', form).map((i) => i.value);
+      const rows = colors.length ? colors : [''];
+      const hidden = Object.keys(p.vstock).filter((k) => +p.vstock[k] > 0 && !rows.includes(NS.splitKey(k)[0]));
+      $('#vGrid').innerHTML = `<div class="table-wrap vgrid-wrap"><table class="vgrid">
+        <thead><tr><th>Цвет</th>${NS.SIZES.map((sz) => `<th>${esc(sz)}</th>`).join('')}<th>Всего</th></tr></thead>
+        <tbody>${rows.map((c) => `<tr><td class="vgrid__color">${c ? `<i style="background:${NS.colorHex(c)}"></i>${esc(c)}` : 'Без цвета'}</td>
+          ${NS.SIZES.map((sz) => { const k = NS.vkey(c, sz); return `<td><input type="number" min="0" inputmode="numeric" data-v="${esc(k)}" value="${+p.vstock[k] || ''}" placeholder="0" aria-label="${esc(c + ' ' + sz)}"></td>`; }).join('')}
+          <td class="num"><b>${NS.SIZES.reduce((a, sz) => a + (+p.vstock[NS.vkey(c, sz)] || 0), 0)}</b></td></tr>`).join('')}</tbody>
+      </table></div>
+      ${hidden.length ? `<p class="hint" style="color:var(--sale)">У снятых цветов остался товар: ${hidden.map((k) => esc(k.replace('|', ' ')) + ' — ' + p.vstock[k] + ' шт.').join(', ')}. Он не продаётся, пока цвет выключен.</p>` : ''}`;
+    };
+    renderGrid();
+    form.addEventListener('change', (e) => { if (e.target.name === 'colors') { renderGrid(); sync(); } });
+
     const renderImgs = () => {
       $('#imgList').innerHTML = p.images.map((src, i) => `<div class="img-item">
           <img src="${esc(src)}" alt="">
@@ -727,7 +931,7 @@
       renderImgs();
       for (const file of files) {
         try {
-          const data = await resizeImage(file, 2400);
+          const data = await resizeImage(file, 2000);
           const r = await NS.api('/api/admin/upload', { data });
           if (draft === p) p.images.push(r.url);
         } catch (err) {
@@ -748,6 +952,12 @@
       if (!(p.price > 0)) return toast('Укажите цену больше нуля', 'error');
       if (!p.colors.length) return toast('Выберите хотя бы один цвет', 'error');
       const idx = NS.products().findIndex((x) => x.id === p.id);
+      if (idx >= 0 && JSON.stringify(p.vstock) !== origV) {
+        const reason = (form.elements.reason && form.elements.reason.value.trim()) || '';
+        if (reason.length < 3) { toast('Остаток изменён — укажите причину (её увидите в журнале склада)', 'error'); form.elements.reason && form.elements.reason.focus(); return; }
+        NS.stockReasons = Object.assign(NS.stockReasons || {}, { [p.id]: reason });
+      }
+      if (p.cost > 0 && NS.finalPrice(p) < p.cost && !confirm('Цена продажи ниже закупочной — товар будет продаваться в убыток. Сохранить?')) return;
       if (idx >= 0) NS.db.products[idx] = p; else NS.db.products.unshift(p);
       const name = p.name;
       closeModal();
@@ -765,7 +975,7 @@
       ctx.fillStyle = '#fff';
       ctx.fillRect(0, 0, c.width, c.height);
       paint(ctx, c.width, c.height);
-      return c.toDataURL('image/jpeg', 0.9);
+      return c.toDataURL('image/jpeg', 0.86);
     };
     return new Promise((resolve, reject) => {
       const fail = () => reject(new Error('Не удалось прочитать изображение. Попробуйте другой файл или сохраните как JPG/PNG.'));
@@ -821,34 +1031,48 @@
   }
 
   /* ---------- заказы ---------- */
+
+  const payPill = (o) => NS.STOCK_FREE_STATUSES.includes(o.status)
+    ? (o.refunded ? '<span class="pill pill--unpaid">деньги возвращены</span>' : '')
+    : (o.paid ? '<span class="pill pill--paid">оплачен</span>' : '<span class="pill pill--unpaid">не оплачен</span>');
+  const channelName = (o) => (o.channel === 'store' ? 'Магазин' : o.channel === 'phone' ? 'По телефону' : 'Сайт');
   function ordersTableHTML(list, compact) {
-    if (!list.length) return '<p class="muted">Заказов пока нет.</p>';
+    if (!list.length) return '<p class="muted" style="padding:12px">Заказов пока нет. Они появятся здесь, как только покупатель оформит заказ на сайте или вы создадите его вручную.</p>';
     return `<div class="table-wrap" style="border:0"><table class="atable">
-      <thead><tr><th>№</th><th>Дата</th><th>Клиент</th>${compact ? '' : '<th>Город</th><th>Доставка</th><th>Оплата</th>'}<th>Сумма</th><th>Статус</th><th></th></tr></thead>
+      <thead><tr><th>№</th><th>Дата</th><th>Клиент</th>${compact ? '' : '<th>Откуда</th><th>Доставка</th><th>Оплата</th>'}<th>Сумма</th><th>Статус</th><th></th></tr></thead>
       <tbody>${list.map((o) => `<tr>
         <td><b>${esc(o.id)}</b></td>
         <td>${fmtDate(o.date, true)}</td>
         <td class="name">${esc(o.customer.name)}<div class="sub">${esc(o.customer.phone)}</div></td>
-        ${compact ? '' : `<td>${esc(o.customer.city || '—')}</td><td>${esc(o.delivery)}</td><td>${esc(o.payment)}</td>`}
-        <td class="num"><b>${money(o.total)}</b><div class="sub">${o.items.reduce((a, i) => a + i.qty, 0)} шт.${o.promo ? ' · ' + esc(o.promo) : ''}</div></td>
-        <td>${compact ? `<span class="pill pill--${esc(o.status)}">${esc(o.status)}</span>` : `<select class="select" data-status="${esc(o.id)}">${NS.ORDER_STATUSES.map((s) => `<option ${o.status === s ? 'selected' : ''}>${s}</option>`).join('')}</select>`}</td>
+        ${compact ? '' : `<td>${channelName(o)}</td><td>${esc(o.delivery)}${o.customer.city ? '<div class="sub">' + esc(o.customer.city) + '</div>' : ''}</td><td>${esc(o.payment)}<div>${payPill(o)}</div></td>`}
+        <td class="num"><b>${money(o.total)}</b><div class="sub">${o.items.reduce((a, i) => a + i.qty, 0)} шт.${o.promo ? ' · ' + esc(o.promo) : ''}</div>${compact ? `<div>${payPill(o)}</div>` : ''}</td>
+        <td>${compact ? `<span class="pill pill--${esc(o.status)}">${esc(o.status)}</span>` : `<select class="select" data-status="${esc(o.id)}" aria-label="Статус заказа">${NS.ORDER_STATUSES.map((s) => `<option ${o.status === s ? 'selected' : ''}>${s}</option>`).join('')}</select>`}</td>
         <td><div class="row-actions"><button data-order="${esc(o.id)}" title="Подробнее">${ICONS.eye}</button></div></td>
       </tr>`).join('')}</tbody></table></div>`;
   }
 
+
   function viewOrders() {
     const st = ui.orders;
     const all = NS.db.orders;
-    $('#topbarActions').innerHTML = `<button class="btn btn--outline" data-export-orders>${t('admin.exportOrders')}</button>`;
+    $('#topbarActions').innerHTML = `<button class="btn btn--outline" data-export-orders>${t('admin.exportOrders')}</button>
+      <button class="btn btn--dark" data-store-sale>+ Заказ вручную</button>`;
     const counts = {};
     all.forEach((o) => { counts[o.status] = (counts[o.status] || 0) + 1; });
+    const unpaid = all.filter((o) => !o.paid && !NS.STOCK_FREE_STATUSES.includes(o.status));
     view.innerHTML = `
-      <div class="chips" style="margin:0 0 16px">
+      <div class="chips" style="margin:0 0 10px">
         <button class="chip ${!st.status ? 'is-on' : ''}" data-ostatus="">Все · ${all.length}</button>
         ${NS.ORDER_STATUSES.map((s) => `<button class="chip ${st.status === s ? 'is-on' : ''}" data-ostatus="${s}">${s} · ${counts[s] || 0}</button>`).join('')}
       </div>
+      <div class="chips" style="margin:0 0 16px">
+        <button class="chip ${!st.pay ? 'is-on' : ''}" data-opay="">Любая оплата</button>
+        <button class="chip ${st.pay === 'unpaid' ? 'is-on' : ''}" data-opay="unpaid">Не оплачены · ${unpaid.length}</button>
+        <button class="chip ${st.pay === 'paid' ? 'is-on' : ''}" data-opay="paid">Оплачены</button>
+      </div>
       <div class="toolbar-a"><input class="input" type="search" placeholder="Поиск: номер, имя, телефон" value="${esc(st.q)}" data-oq></div>
-      <div class="panel" style="padding:8px 8px 4px" id="oTable"></div>`;
+      <div class="panel" style="padding:8px 8px 4px" id="oTable"></div>
+      <p class="prod-help">Как работать: новый заказ → позвоните клиенту → «Подтверждён» → «Отправлен» → «Доставлен». Деньги получили — нажмите «Отметить оплату» в карточке заказа. Отмена или возврат сами вернут товар на склад.</p>`;
     renderOrdersTable();
   }
 
@@ -857,58 +1081,84 @@
     if (!$('#oTable')) return;
     const q = st.q.trim().toLowerCase();
     const list = NS.db.orders.filter((o) => (!st.status || o.status === st.status) &&
+      (!st.pay || (st.pay === 'paid' ? o.paid && !o.refunded : !o.paid && !NS.STOCK_FREE_STATUSES.includes(o.status))) &&
       (!q || [o.id, o.customer.name, o.customer.phone, o.customer.city].join(' ').toLowerCase().includes(q)));
     $('#oTable').innerHTML = ordersTableHTML(list, false);
   }
 
+
   function setOrderStatus(id, status) {
     const o = NS.db.orders.find((x) => x.id === id);
-    if (!o) return Promise.resolve();
-    const was = o.status === 'Отменён', now = status === 'Отменён';
+    if (!o || o.status === status) return Promise.resolve(true);
+    const wasFree = NS.STOCK_FREE_STATUSES.includes(o.status), nowFree = NS.STOCK_FREE_STATUSES.includes(status);
+    if (nowFree && !wasFree) {
+      const msg = (status === 'Возврат' ? 'Оформить возврат' : 'Отменить заказ') + ` ${o.id}?\n\nТовар вернётся на склад.`
+        + (o.paid ? `\nОплата ${money(o.total)} будет учтена как возвращённая покупателю.` : '');
+      if (!confirm(msg)) return Promise.resolve(false);
+    }
+    if (wasFree && !nowFree && !confirm(`Вернуть заказ ${o.id} в работу? Товар снова будет списан со склада.`)) return Promise.resolve(false);
     return call('/api/admin/order', { id, status },
-      `Заказ ${esc(id)}: «${esc(status)}»${was !== now ? (now ? ' — товары возвращены на склад' : ' — товары списаны со склада') : ''}`)
-      .catch(() => {});
+      `Заказ ${esc(id)}: «${esc(status)}»${wasFree !== nowFree ? (nowFree ? ' — товар возвращён на склад' : ' — товар снова списан') : ''}`)
+      .then(() => true)
+      .catch(() => false);
   }
+
 
   function openOrder(id) {
     const o = NS.db.orders.find((x) => x.id === id);
-    if (!o) return;
+    if (!o) return toast('Заказ не найден — возможно, он удалён', 'error');
+    const cost = o.items.reduce((a, it) => a + (+it.cost || 0) * it.qty, 0);
+    const noCost = o.items.some((it) => !(+it.cost > 0));
+    const free = NS.STOCK_FREE_STATUSES.includes(o.status);
     openModal(`<div class="order-head">
-        <div><h2 style="margin:0">Заказ ${esc(o.id)}</h2><div class="muted">${fmtDate(o.date, true)}</div></div>
-        <div><span class="pill pill--${esc(o.status)}">${esc(o.status)}</span></div>
+        <div><h2 style="margin:0">Заказ ${esc(o.id)}</h2><div class="muted">${fmtDate(o.date, true)} · ${channelName(o)}</div></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><span class="pill pill--${esc(o.status)}">${esc(o.status)}</span>${payPill(o)}</div>
       </div>
       <div class="order-grid">
         <div><b>Клиент</b>${esc(o.customer.name)}<br><a href="tel:${esc(o.customer.phone.replace(/[^\d+]/g, ''))}">${esc(o.customer.phone)}</a>${o.customer.email ? '<br>' + esc(o.customer.email) : ''}</div>
-        <div><b>Доставка и оплата</b>${esc(o.delivery)}${o.customer.city ? ', ' + esc(o.customer.city) : ''}<br>${esc(o.customer.address)}<br>Оплата: ${esc(o.payment)}</div>
+        <div><b>Доставка и оплата</b>${esc(o.delivery)}${o.customer.city ? ', ' + esc(o.customer.city) : ''}<br>${esc(o.customer.address)}<br>Оплата: ${esc(o.payment)}${o.paid && o.paidAt ? '<br>Оплачено ' + fmtDate(o.paidAt, true) : ''}${o.refunded ? '<br>Деньги возвращены ' + fmtDate(o.refundedAt, true) : ''}</div>
         ${o.customer.comment ? `<div style="grid-column:1/-1"><b>Комментарий</b>${esc(o.customer.comment)}</div>` : ''}
       </div>
       <table class="atable"><thead><tr><th>Товар</th><th>Цвет</th><th>Размер</th><th>Кол-во</th><th>Цена</th><th>Сумма</th></tr></thead><tbody>
-        ${o.items.map((it) => `<tr><td class="name">${esc(it.name)}</td><td>${esc(it.color)}</td><td>${esc(it.size)}</td><td>${it.qty}</td><td class="num">${money(it.price)}</td><td class="num">${money(it.price * it.qty)}</td></tr>`).join('')}
+        ${o.items.map((it) => `<tr><td class="name">${esc(it.name)}${it.sku ? `<div class="sub">${esc(it.sku)}</div>` : ''}</td><td>${esc(it.color || '—')}</td><td>${esc(it.size)}</td><td>${it.qty}</td><td class="num">${money(it.price)}</td><td class="num">${money(it.price * it.qty)}</td></tr>`).join('')}
       </tbody></table>
-      <div class="totals" style="max-width:360px;margin:18px 0 0 auto">
+      <div class="totals" style="max-width:380px;margin:18px 0 0 auto">
         <div><span>Товары</span><span>${money(o.subtotal)}</span></div>
         ${o.autoDiscount ? `<div class="is-discount"><span>Скидка от суммы</span><span>−${money(o.autoDiscount)}</span></div>` : ''}
-        ${o.promoDiscount ? `<div class="is-discount"><span>Промокод ${esc(o.promo)}</span><span>−${money(o.promoDiscount)}</span></div>` : ''}
+        ${o.promoDiscount ? `<div class="is-discount"><span>${o.promo ? 'Промокод ' + esc(o.promo) : 'Скидка'}</span><span>−${money(o.promoDiscount)}</span></div>` : ''}
         <div><span>Доставка</span><span>${o.shipping ? money(o.shipping) : 'Бесплатно'}</span></div>
         <div class="total"><span>Итого</span><span>${money(o.total)}</span></div>
-        <div><span></span><span class="muted">≈ ${usd(o.total)}</span></div>
+        <div><span class="muted">Себестоимость товаров</span><span class="muted">${noCost ? 'не у всех товаров указана закупка' : money(cost)}</span></div>
+        ${!noCost ? `<div><span class="muted">Валовая прибыль</span><span class="${o.total - cost >= 0 ? 'money-in' : 'money-out'}">${money(o.total - cost)}</span></div>` : ''}
       </div>
-      <div class="form-actions" style="justify-content:space-between;flex-wrap:wrap">
-        <button class="btn btn--outline" data-order-del="${esc(o.id)}" style="color:var(--sale)">Удалить заказ</button>
+      ${(o.history || []).length ? `<details style="margin-top:14px"><summary class="muted">История заказа</summary><ul class="muted" style="font-size:13px">${o.history.slice().reverse().map((h) => `<li>${fmtDate(h.at, true)} — ${esc(h.text)}</li>`).join('')}</ul></details>` : ''}
+      <div class="form-actions" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          ${NS.ORDER_STATUSES.filter((s) => s !== o.status).map((s) => `<button class="btn ${s === 'Отменён' ? 'btn--outline' : 'btn--dark'}" data-order-status="${esc(o.id)}" data-v="${s}">${s}</button>`).join('')}
+          ${free ? '' : (o.paid
+            ? `<button class="btn btn--outline" data-order-paid="${esc(o.id)}" data-v="0">Снять оплату</button>`
+            : `<button class="btn btn--gold" data-order-paid="${esc(o.id)}" data-v="1">Отметить оплату · ${money(o.total)}</button>`)}
+          <button class="btn btn--outline" data-order-del="${esc(o.id)}" style="color:var(--sale)">Удалить</button>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${NS.ORDER_STATUSES.filter((s) => s !== o.status).map((s) => `<button class="btn ${NS.STOCK_FREE_STATUSES.includes(s) ? 'btn--outline' : 'btn--dark'}" data-order-status="${esc(o.id)}" data-v="${s}">${s === 'Возврат' ? 'Оформить возврат' : s}</button>`).join('')}
         </div>
       </div>`);
   }
 
+  // защита от CSV-инъекций: значение, начинающееся с = + - @, Excel выполнил бы как формулу
+  function csvSafe(c) {
+    const v = String(c == null ? '' : c);
+    return typeof c !== 'number' && /^[=+\-@\t\r]/.test(v) ? "'" + v : v;
+  }
+
   function exportOrdersCSV() {
-    const rows = [['Номер', 'Дата', 'Статус', 'Клиент', 'Телефон', 'E-mail', 'Город', 'Адрес', 'Доставка', 'Оплата', 'Товары', 'Сумма товаров', 'Скидка от суммы', 'Промокод', 'Скидка по промокоду', 'Доставка, сум', 'Итого, сум']];
+    const rows = [['Номер', 'Дата', 'Статус', 'Оплачен', 'Клиент', 'Телефон', 'E-mail', 'Город', 'Адрес', 'Доставка', 'Оплата', 'Товары', 'Сумма товаров', 'Скидка от суммы', 'Промокод', 'Скидка по промокоду', 'Доставка, сум', 'Итого, сум']];
     NS.db.orders.forEach((o) => rows.push([
-      o.id, fmtDate(o.date, true), o.status, o.customer.name, o.customer.phone, o.customer.email, o.customer.city, o.customer.address,
+      o.id, fmtDate(o.date, true), o.status, o.refunded ? 'возвращён' : o.paid ? 'да' : 'нет', o.customer.name, o.customer.phone, o.customer.email, o.customer.city, o.customer.address,
       o.delivery, o.payment, o.items.map((i) => `${i.name} (${i.color}, ${i.size}) x${i.qty}`).join('; '),
       o.subtotal, o.autoDiscount || 0, o.promo, o.promoDiscount, o.shipping, o.total,
     ]));
-    const csv = rows.map((r) => r.map((c) => `"${String(c == null ? '' : c).replace(/"/g, '""')}"`).join(';')).join('\r\n');
+    const csv = rows.map((r) => r.map((c) => `"${csvSafe(c).replace(/"/g, '""')}"`).join(';')).join('\r\n');
     download('nargizka-orders.csv', '\ufeff' + csv, 'text/csv;charset=utf-8');
   }
 
@@ -1155,38 +1405,36 @@
   }
 
   /** Остаток на начало периода: opening + все операции до from */
+
+  /** Деньги в кассе на начало периода: стартовые деньги + все движения до from */
   function financeOpeningAt(fromTs) {
-    const fin = financeEnsure();
-    let bal = +fin.openingBalance || 0;
-    NS.db.orders.forEach((o) => {
-      if (o.status === 'Отменён') return;
-      if (ui.finance.paidOnly && !financePaidStatuses().includes(o.status)) return;
-      if (o.date < fromTs) bal += +o.total || 0;
-    });
-    fin.entries.forEach((e) => {
-      if (e.date < fromTs) bal += e.type === 'in' ? (+e.amount || 0) : -(+e.amount || 0);
-    });
-    return bal;
+    return NS.cashAt(NS.db, fromTs - 1);
   }
 
 
+
+  /* Движение денег: оплаты заказов (по дате оплаты), возвраты покупателям, ручные приходы и расходы */
   function rowsInRange(from, to) {
     const fin = financeEnsure();
-    const st = ui.finance;
     const rows = [];
+    const inR = (t) => t >= from && t <= to;
     NS.db.orders.forEach((o) => {
-      if (o.status === 'Отменён') return;
-      if (st.paidOnly && !financePaidStatuses().includes(o.status)) return;
-      if (o.date < from || o.date > to) return;
-      rows.push({
-        key: 'o-' + o.id, date: o.date, type: 'in',         category: o.channel === 'store' ? 'Продажа в магазине' : 'Продажа',
-        amount: +o.total || 0,
-        note: (o.channel === 'store' ? 'Витрина ' : 'Заказ ') + o.id + ' · ' + ((o.customer && o.customer.name) || '') + ' · ' + o.status,
-        source: 'order', orderId: o.id, status: o.status, channel: o.channel || 'online',
-      });
+      const who = ((o.customer && o.customer.name) || '');
+      if (o.paid && inR(o.paidAt || o.date)) {
+        rows.push({
+          key: 'o-' + o.id, date: o.paidAt || o.date, type: 'in', category: o.channel === 'store' ? 'Продажа в магазине' : 'Оплата заказа',
+          amount: +o.total || 0, note: o.id + ' · ' + who + ' · ' + o.payment, source: 'order', orderId: o.id, status: o.status, channel: o.channel || 'online',
+        });
+      }
+      if (o.paid && o.refunded && inR(o.refundedAt)) {
+        rows.push({
+          key: 'r-' + o.id, date: o.refundedAt, type: 'out', category: 'Возврат денег покупателю',
+          amount: +o.total || 0, note: o.id + ' · ' + who + ' · ' + o.status, source: 'refund', orderId: o.id,
+        });
+      }
     });
     fin.entries.forEach((e) => {
-      if (e.date < from || e.date > to) return;
+      if (!inR(e.date)) return;
       rows.push({
         key: e.id, date: e.date, type: e.type === 'in' ? 'in' : 'out',
         category: e.category, amount: +e.amount || 0, note: e.note || '',
@@ -1212,8 +1460,9 @@
     return applyFinanceFilters(rowsInRange(from, to));
   }
 
-  function pendingOrders(from, to) {
-    return NS.db.orders.filter((o) => o.status === 'Новый' && o.date >= from && o.date <= to);
+
+  function pendingOrders() {
+    return NS.db.orders.filter((o) => !o.paid && !NS.STOCK_FREE_STATUSES.includes(o.status));
   }
 
   function setFinancePreset(key) {
@@ -1221,6 +1470,7 @@
     const startOf = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
     let from, to;
     if (key === 'today') { from = startOf(now); to = new Date(from); to.setHours(23, 59, 59, 999); }
+    else if (key === 'week') { from = startOf(now); from.setDate(from.getDate() - ((from.getDay() + 6) % 7)); to = new Date(from); to.setDate(to.getDate() + 6); to.setHours(23, 59, 59, 999); }
     else if (key === '7') { to = new Date(now); to.setHours(23, 59, 59, 999); from = startOf(now); from.setDate(from.getDate() - 6); }
     else if (key === 'month') { from = new Date(now.getFullYear(), now.getMonth(), 1); to = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999); }
     else if (key === 'quarter') {
@@ -1271,43 +1521,22 @@
     const span = Math.max(1, range.to - range.from);
     const prevRaw = rowsInRange(range.from - span, range.from - 1);
     const prev = financeTotals(prevRaw);
+    const rep = NS.financeReport(NS.db, range.from, range.to);
+    const prevRep = NS.financeReport(NS.db, range.from - span, range.from - 1);
     const salesRows = raw.filter((r) => r.source === 'order');
-    const sales = salesRows.reduce((acc, r) => acc + r.amount, 0);
-    const otherIn = raw.filter((r) => r.type === 'in' && r.source !== 'order').reduce((acc, r) => acc + r.amount, 0);
+    const sales = rep.revenue;
+    const otherIn = rep.otherIncome;
     const byCatOut = {};
     raw.filter((r) => r.type === 'out').forEach((r) => { byCatOut[r.category] = (byCatOut[r.category] || 0) + r.amount; });
     const catList = Object.entries(byCatOut).sort((x, y) => y[1] - x[1]);
     const maxCat = Math.max(1, ...catList.map((x) => x[1]));
-    const pending = pendingOrders(range.from, range.to);
+    const pending = pendingOrders();
     const pendingSum = pending.reduce((acc, o) => acc + (+o.total || 0), 0);
-    const margin = tsum.income ? Math.round((tsum.net / tsum.income) * 100) : 0;
     const daysCount = Math.max(1, Math.round(span / 86400000));
-    const avgDay = Math.round(sales / daysCount);
-
-    const dayMap = new Map();
-    salesRows.forEach((r) => {
-      const d = new Date(r.date); d.setHours(0, 0, 0, 0);
-      const k = d.getTime();
-      if (!dayMap.has(k)) dayMap.set(k, { t: k, sum: 0, n: 0, items: 0 });
-      const x = dayMap.get(k);
-      x.sum += r.amount;
-      x.n += 1;
-      const o = NS.db.orders.find((ord) => ord.id === r.orderId);
-      if (o) x.items += (o.items || []).reduce((s, it) => s + (+it.qty || 0), 0);
-    });
-    const daily = [...dayMap.values()].sort((x, y) => y.t - x.t);
-
-    const payMap = {}, statusMap = {};
-    NS.db.orders.forEach((o) => {
-      if (o.status === 'Отменён') return;
-      if (st.paidOnly && !financePaidStatuses().includes(o.status)) return;
-      if (o.date < range.from || o.date > range.to) return;
-      const pay = o.payment || 'Не указано';
-      payMap[pay] = (payMap[pay] || 0) + (+o.total || 0);
-      statusMap[o.status] = (statusMap[o.status] || 0) + (+o.total || 0);
-    });
-    const payList = Object.entries(payMap).sort((x, y) => y[1] - x[1]);
-    const statusList = Object.entries(statusMap).sort((x, y) => y[1] - x[1]);
+    const avgDay = Math.round(rep.netRevenue / daysCount);
+    const daily = Object.values(rep.byDay).map((x) => ({ t: x.t, sum: x.revenue - x.refunds, n: x.orders, items: x.items, gross: x.revenue - x.refunds - x.cogs, refunds: x.refunds })).sort((x, y) => y.t - x.t);
+    const payList = Object.entries(rep.byPayment).sort((x, y) => y[1] - x[1]);
+    const statusList = Object.entries(rep.byChannel).sort((x, y) => y[1] - x[1]);
 
     const buckets = [];
     const cursor = new Date(range.from); cursor.setHours(0, 0, 0, 0);
@@ -1335,6 +1564,7 @@
     const periodLabel = fmtDate(range.from) + ' — ' + fmtDate(range.to);
     const presets = [
       ['today', 'Сегодня'],
+      ['week', 'Эта неделя'],
       ['7', '7 дней'],
       ['month', 'Этот месяц'],
       ['quarter', 'Квартал'],
@@ -1343,6 +1573,7 @@
     ];
     const tabs = [
       ['overview', 'Касса'],
+      ['profit', 'Прибыль'],
       ['sales', 'Продажи по дням'],
       ['expenses', 'Расходы'],
       ['journal', 'Журнал'],
@@ -1382,37 +1613,35 @@
             <input class="input" type="search" id="finSearch" placeholder="Номер заказа, статья, клиент…" value="${esc(st.q)}" data-fin="q">
           </label>
         </div>
-        <label class="fin-check">
-          <input type="checkbox" data-fin="paidOnly" ${st.paidOnly ? 'checked' : ''}>
-          <span>В кассу только подтверждённые / отправленные / доставленные заказы</span>
-        </label>
+        <p class="hint" style="margin:10px 0 0">Продажа попадает в выручку в день оплаты. Неоплаченные заказы показаны отдельно и в выручку не входят.</p>
       </div>
 
       <div class="fin-flow">
         <div><span>Было в кассе</span><b>${money(opening)}</b><small>на начало периода</small></div>
         <i aria-hidden="true">+</i>
-        <div class="is-in"><span>Пришло</span><b>+${money(tsum.income)}</b><small>${pctDelta(tsum.income, prev.income)} к прошлому периоду</small></div>
+        <div class="is-in"><span>Пришло денег</span><b>+${money(tsum.income)}</b><small>${pctDelta(tsum.income, prev.income)} к прошлому периоду</small></div>
         <i aria-hidden="true">−</i>
-        <div class="is-out"><span>Ушло</span><b>−${money(tsum.expense)}</b><small>${pctDelta(tsum.expense, prev.expense)} к прошлому периоду</small></div>
+        <div class="is-out"><span>Ушло денег</span><b>−${money(tsum.expense)}</b><small>${pctDelta(tsum.expense, prev.expense)} к прошлому периоду</small></div>
         <i aria-hidden="true">=</i>
         <div class="is-end"><span>Сейчас в кассе</span><b>${money(closing)}</b><small>${tsum.net >= 0 ? 'плюс' : 'минус'} ${money(Math.abs(tsum.net))} за период</small></div>
       </div>
 
       <div class="fin-summary">
-        <div class="kpi"><span>Продажи</span><b>${money(sales)}</b><small>${salesRows.length} заказов · ср. ${money(avgDay)} / день</small></div>
-        <div class="kpi"><span>Другие поступления</span><b class="money-in">+${money(otherIn)}</b><small>не из заказов сайта</small></div>
-        <div class="kpi"><span>Прибыль периода</span><b class="${tsum.net >= 0 ? 'money-in' : 'money-out'}">${tsum.net >= 0 ? '+' : '−'}${money(Math.abs(tsum.net))}</b><small>маржа ${margin}%</small></div>
-        <div class="kpi"><span>Ждут подтверждения</span><b>${money(pendingSum)}</b><small>${pending.length ? pending.length + ' новых заказов' : 'новых заказов нет'}</small></div>
+        <div class="kpi"><span>Выручка</span><b>${money(rep.netRevenue)}</b><small>${rep.paidOrders} ${plural(rep.paidOrders, 'оплаченный заказ', 'оплаченных заказа', 'оплаченных заказов')}${rep.refunds ? ' · возвраты −' + money(rep.refunds) : ''} · ${pctDelta(rep.netRevenue, prevRep.netRevenue)}</small></div>
+        <div class="kpi"><span>Валовая прибыль</span><b class="${rep.gross >= 0 ? 'money-in' : 'money-out'}">${money(rep.gross)}</b><small>выручка − себестоимость · маржа ${rep.margin}%</small></div>
+        <div class="kpi kpi--gold"><span>Чистая прибыль</span><b>${rep.net >= 0 ? '' : '−'}${money(Math.abs(rep.net))}</b><small>после расходов ${money(rep.operating)}</small></div>
+        <div class="kpi"><span>Не оплачено</span><b>${money(pendingSum)}</b><small>${pending.length ? pending.length + ' заказов ждут оплаты' : 'все заказы оплачены'}</small></div>
       </div>
+      ${rep.missingCost ? `<div class="note-warn">У ${rep.missingCost} проданных шт. не была указана закупочная цена — прибыль по ним завышена. Укажите закупку в карточке товара: новые продажи посчитаются верно.</div>` : ''}
 
       <div class="fin-tabs">
         ${tabs.map(([k, label]) => `<button type="button" class="fin-tab ${st.tab === k ? 'is-on' : ''}" data-fin-tab="${k}">${label}</button>`).join('')}
       </div>
       <div id="finTabBody">${financeTabHTML(st.tab, {
         buckets, maxBar, W, H, bw, journal, catList, maxCat, tsum, opening, closing, sales, otherIn,
-        daily, payList, statusList, pending, pendingSum, salesRows,
+        daily, payList, statusList, pending, pendingSum, salesRows, rep,
       })}</div>
-      <p class="fin-help">1) Выберите период. 2) Смотрите «Пришло / Ушло / Осталось». 3) Вкладка «Продажи по дням» — ежедневный отчёт. 4) «+ Деньги ушли» — аренда, закупка, зарплата. Отменённые заказы в кассу не входят.</p>`;
+      <p class="fin-help">1) Выберите период. 2) «Касса» — сколько денег пришло и ушло. 3) «Прибыль» — сколько вы заработали: выручка минус себестоимость и расходы. 4) «+ Деньги ушли» — аренда, зарплата, реклама; оплата поставщику записывается автоматически при поступлении товара. Это управленческий учёт магазина — он не заменяет бухгалтерскую и налоговую отчётность.</p>`;
 
     const search = $('#finSearch');
     if (search && st._keepFocus) {
@@ -1423,20 +1652,52 @@
   }
 
   function financeTabHTML(tab, d) {
+    if (tab === 'profit') {
+      const r = d.rep;
+      const row = (label, v, cls, hint) => `<tr class="${cls || ''}"><td>${label}${hint ? `<div class="sub">${hint}</div>` : ''}</td><td class="num">${v < 0 ? '−' : ''}${money(Math.abs(v))}</td></tr>`;
+      return `<div class="panels"><div class="panel">
+          <div class="panel__head"><h2>Отчёт о прибыли</h2><span class="muted">за выбранный период</span></div>
+          <table class="atable pl-table"><tbody>
+            ${row('Выручка (оплаченные заказы)', r.revenue, '', r.paidOrders + ' ' + plural(r.paidOrders, 'заказ', 'заказа', 'заказов') + ', ' + r.itemsSold + ' шт.')}
+            ${r.refunds ? row('Возвраты покупателям', -r.refunds, '', r.refundedOrders + ' ' + plural(r.refundedOrders, 'заказ', 'заказа', 'заказов')) : ''}
+            ${row('Чистая выручка', r.netRevenue, 'is-total')}
+            ${row('Себестоимость проданного', -r.netCogs, '', 'по закупочной цене на момент продажи')}
+            ${row('Валовая прибыль', r.gross, 'is-total', 'маржа ' + r.margin + '%')}
+            ${row('Расходы магазина', -r.operating, '', 'аренда, зарплата, реклама и т. п. — без закупки товара')}
+            ${r.otherIncome ? row('Прочие поступления', r.otherIncome) : ''}
+            ${row('Чистая прибыль', r.net, 'is-total')}
+          </tbody></table>
+          <p class="hint" style="margin-top:12px">Оплата поставщику (${money(r.purchases)} за период) — это вложение в товар, а не расход: в прибыли она учитывается через себестоимость, когда товар продан.</p>
+        </div><div>
+          <div class="panel">
+            <div class="panel__head"><h2>Скидки</h2></div>
+            <table class="atable"><tbody>
+              <tr><td>Скидки от суммы заказа</td><td class="num">${money(r.discounts)}</td></tr>
+              <tr><td>Промокоды и ручные скидки</td><td class="num">${money(r.promoDiscounts)}</td></tr>
+              <tr><td>Доставка, оплаченная покупателями</td><td class="num">${money(r.shipping)}</td></tr>
+            </tbody></table>
+          </div>
+          <div class="panel">
+            <div class="panel__head"><h2>Ждут оплаты</h2><span class="muted">${money(d.pendingSum)}</span></div>
+            ${d.pending.length ? `<table class="atable"><tbody>${d.pending.slice(0, 10).map((o) => `<tr><td class="name">${esc(o.id)}<div class="sub">${esc(o.customer && o.customer.name)} · ${esc(o.status)}</div></td><td class="num">${money(o.total)}</td><td><button class="link-btn" data-order="${esc(o.id)}">открыть</button></td></tr>`).join('')}</tbody></table>` : '<p class="muted">Неоплаченных заказов нет.</p>'}
+          </div>
+        </div></div>`;
+    }
     if (tab === 'sales') {
       return `<div class="panels"><div>
           <div class="panel">
             <div class="panel__head"><h2>Ежедневный отчёт по продажам</h2><span class="muted">${d.daily.length} дн.</span></div>
             ${d.daily.length ? `<div class="table-wrap"><table class="atable">
-              <thead><tr><th>Дата</th><th>Заказов</th><th>Товаров</th><th>Выручка</th><th>Средний чек</th></tr></thead>
+              <thead><tr><th>Дата</th><th>Заказов</th><th>Товаров</th><th>Выручка</th><th>Валовая прибыль</th><th>Средний чек</th></tr></thead>
               <tbody>${d.daily.map((x) => `<tr>
                 <td>${new Date(x.t).toLocaleDateString('ru-RU', { weekday: 'short', day: '2-digit', month: 'long' })}</td>
                 <td class="num">${x.n}</td>
                 <td class="num">${x.items}</td>
-                <td class="num money-in"><b>${money(x.sum)}</b></td>
+                <td class="num money-in"><b>${money(x.sum)}</b>${x.refunds ? `<div class="sub">возвраты −${money(x.refunds)}</div>` : ''}</td>
+                <td class="num">${money(x.gross)}</td>
                 <td class="num">${money(x.n ? x.sum / x.n : 0)}</td>
               </tr>`).join('')}
-              <tr><td><b>Итого</b></td><td class="num"><b>${d.salesRows.length}</b></td><td class="num"><b>${d.daily.reduce((acc, x) => acc + x.items, 0)}</b></td><td class="num money-in"><b>${money(d.sales)}</b></td><td class="num"><b>${money(d.salesRows.length ? d.sales / d.salesRows.length : 0)}</b></td></tr>
+              <tr><td><b>Итого</b></td><td class="num"><b>${d.rep.paidOrders}</b></td><td class="num"><b>${d.daily.reduce((acc, x) => acc + x.items, 0)}</b></td><td class="num money-in"><b>${money(d.rep.netRevenue)}</b></td><td class="num"><b>${money(d.rep.gross)}</b></td><td class="num"><b>${money(d.rep.paidOrders ? d.rep.revenue / d.rep.paidOrders : 0)}</b></td></tr>
             </tbody></table></div>` : '<p class="muted">В этом периоде продаж нет.</p>'}
           </div>
         </div><div>
@@ -1445,7 +1706,7 @@
             ${d.payList.length ? `<table class="atable"><tbody>${d.payList.map(([name, sum]) => `<tr><td class="name">${esc(name)}</td><td class="num">${money(sum)}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">Нет данных.</p>'}
           </div>
           <div class="panel">
-            <div class="panel__head"><h2>По статусу заказа</h2></div>
+            <div class="panel__head"><h2>Откуда продажи</h2></div>
             ${d.statusList.length ? `<table class="atable"><tbody>${d.statusList.map(([name, sum]) => `<tr><td class="name">${esc(name)}</td><td class="num">${money(sum)}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">Нет данных.</p>'}
           </div>
           ${d.pending.length ? `<div class="panel">
@@ -1514,7 +1775,7 @@
         <div class="panel">
           <div class="panel__head"><h2>Сводка</h2></div>
           <table class="atable"><tbody>
-            <tr><td>Продажи с сайта</td><td class="num money-in">+${money(d.sales)}</td></tr>
+            <tr><td>Оплаты заказов</td><td class="num money-in">+${money(d.sales)}</td></tr>
             <tr><td>Другие поступления</td><td class="num money-in">+${money(d.otherIn)}</td></tr>
             <tr><td><b>Всего пришло</b></td><td class="num"><b>+${money(d.tsum.income)}</b></td></tr>
             ${d.catList.slice(0, 6).map(([name, sum]) => `<tr><td>${esc(name)}</td><td class="num money-out">−${money(sum)}</td></tr>`).join('')}
@@ -1550,7 +1811,7 @@
         r.note,
       ]);
     });
-    const csv = '\ufeff' + lines.map((row) => row.map((c) => '"' + String(c).replace(/"/g, '""') + '"').join(';')).join('\r\n');
+    const csv = '\ufeff' + lines.map((row) => row.map((c) => '"' + csvSafe(c).replace(/"/g, '""') + '"').join(';')).join('\r\n');
     download('nargizka-finance.csv', csv, 'text/csv;charset=utf-8');
   }
 
@@ -1561,7 +1822,7 @@
     const cat = entry ? entry.category : cats[0];
     const options = cats.includes(cat) ? cats : [cat].concat(cats);
     openModal(`<h2>${entry ? 'Изменить запись' : (isIn ? 'Деньги пришли в кассу' : 'Деньги ушли из кассы')}</h2>
-      <p class="hint" style="margin-top:-6px">${isIn ? 'Вложение, возврат от поставщика или прочий приход — не заказ с сайта.' : 'Аренда, закупка, зарплата, реклама и всё, что вы платите сами.'}</p>
+      <p class="hint" style="margin-top:-6px">${isIn ? 'Вложение владельца, возврат от поставщика или прочий приход — не оплата заказа. Вложения и возвраты от поставщика не считаются прибылью.' : 'Аренда, зарплата, реклама и всё, что вы платите сами. Оплату поставщику за товар удобнее записывать через «Поступление» на складе — тогда себестоимость посчитается сама.'}</p>
       <form id="finEntryForm" class="form-grid" data-fin-type="${isIn ? 'in' : 'out'}" data-fin-id="${entry ? esc(entry.id) : ''}">
         <div class="field"><label>Дата</label><input class="input" type="date" name="date" value="${dateVal}" required></div>
         <div class="field"><label>Сумма, сум</label><input class="input" type="number" min="1" step="1000" name="amount" required value="${entry ? entry.amount : ''}" placeholder="500000"></div>
@@ -1720,28 +1981,46 @@
         <div class="panel">
           <div class="panel__head"><h2>Пароль администратора</h2></div>
           <form id="passForm" class="form-grid">
-            <div class="field"><label>Новый пароль (от 6 символов)</label><input class="input" type="password" name="p1" autocomplete="new-password"></div>
+            <div class="field"><label>Новый пароль (от 8 символов)</label><input class="input" type="password" name="p1" autocomplete="new-password"></div>
             <div class="field"><label>Повторите пароль</label><input class="input" type="password" name="p2" autocomplete="new-password"></div>
             <div class="full form-actions" style="margin-top:0"><button class="btn btn--dark" type="submit">Сменить пароль</button></div>
           </form>
         </div>
 
         <div class="panel">
-          <div class="panel__head"><h2>Эмблема бренда</h2></div>
-          <div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap">
-            <img src="/assets/logo.svg" alt="Эмблема Nargizka Shop" style="width:120px;height:120px">
-            <div><p class="muted" style="font-size:13px;max-width:260px">Векторный файл — подходит для вывески, бирок и упаковки.</p>
-            <a class="btn btn--outline" href="/assets/logo.svg" download="nargizka-logo.svg" style="height:42px;margin-top:12px">Скачать SVG</a></div>
-          </div>
+          <div class="panel__head"><h2>Бренд магазина</h2></div>
+          <p class="hint">Название, логотип и цвета на сайте, в письмах и SMS. Меняются без программиста — пригодится, если платформа будет работать для другого магазина.</p>
+          <form id="brandForm" class="form-grid">
+            <div class="field"><label>Полное название</label><input class="input" name="name" value="${esc(NS.brand().name)}" maxlength="80"></div>
+            <div class="field"><label>Короткое название (в логотипе)</label><input class="input" name="short" value="${esc(NS.brand().short)}" maxlength="40"></div>
+            <div class="field full"><label>Слоган</label><input class="input" name="tagline" value="${esc(NS.brand().tagline)}" maxlength="160"></div>
+            <div class="field full"><label>Логотип</label>
+              <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+                <img id="brandLogoPreview" src="${esc(NS.brand().logoUrl || '/assets/logo.svg')}" alt="" style="width:72px;height:72px;object-fit:contain;border:1px solid var(--line);border-radius:12px;background:#fff">
+                <label class="btn btn--outline" style="height:42px;cursor:pointer">Загрузить логотип<input type="file" accept="image/*" id="brandLogoFile" hidden></label>
+                <button type="button" class="link-btn" data-logo-reset>Стандартный</button>
+                <input type="hidden" name="logoUrl" value="${esc(NS.brand().logoUrl || '')}">
+              </div>
+            </div>
+            <div class="field"><label>Акцентный цвет</label><div style="display:flex;gap:8px;align-items:center"><input type="color" name="accent" value="${esc(NS.brand().accent || '#b8913f')}" style="width:52px;height:40px;padding:2px"><label class="muted" style="font-size:13px"><input type="checkbox" name="accentDefault" ${NS.brand().accent ? '' : 'checked'}> стандартный</label></div></div>
+            <div class="field"><label>Основной тёмный цвет</label><div style="display:flex;gap:8px;align-items:center"><input type="color" name="dark" value="${esc(NS.brand().dark || '#111111')}" style="width:52px;height:40px;padding:2px"><label class="muted" style="font-size:13px"><input type="checkbox" name="darkDefault" ${NS.brand().dark ? '' : 'checked'}> стандартный</label></div></div>
+            <div class="field"><label>Город</label><input class="input" name="city" value="${esc(NS.brand().city)}"></div>
+            <div class="field"><label>Часы работы</label><input class="input" name="workHours" value="${esc(NS.brand().workHours)}" placeholder="Ежедневно 10:00–21:00"></div>
+            <div class="field"><label>WhatsApp</label><input class="input" name="whatsapp" value="${esc(NS.brand().whatsapp)}" placeholder="+998 …"></div>
+            <div class="field"><label>Facebook (ссылка)</label><input class="input" name="facebook" value="${esc(NS.brand().facebook)}" placeholder="https://facebook.com/…"></div>
+            <div class="field"><label>TikTok (ссылка)</label><input class="input" name="tiktok" value="${esc(NS.brand().tiktok)}" placeholder="https://tiktok.com/@…"></div>
+            <div class="field"><label>YouTube (ссылка)</label><input class="input" name="youtube" value="${esc(NS.brand().youtube)}" placeholder="https://youtube.com/…"></div>
+            <div class="field full"><label>Ссылка на карту</label><input class="input" name="mapUrl" value="${esc(NS.brand().mapUrl)}" placeholder="https://yandex.uz/maps/…"></div>
+            <div class="full form-actions" style="margin-top:0"><button class="btn btn--dark" type="submit">Сохранить бренд</button></div>
+          </form>
         </div>
 
         <div class="panel">
           <div class="panel__head"><h2>Данные магазина</h2></div>
-          <p class="hint">Резервная копия товаров, заказов и настроек. Фото хранятся отдельно в папке uploads на сервере.</p>
+          <p class="hint">Скачивайте резервную копию хотя бы раз в неделю и храните её в надёжном месте (в ней есть телефоны и адреса покупателей). Фото хранятся в базе отдельно и в файл не входят. «Загрузить копию» заменяет текущие данные — перед этим сервер сам сохраняет снимок.</p>
           <div style="display:flex;gap:10px;flex-wrap:wrap">
             <button class="btn btn--dark" data-export-db style="height:44px">Скачать резервную копию</button>
             <label class="btn btn--outline" style="height:44px;cursor:pointer">Загрузить копию<input type="file" accept="application/json" id="importDb" hidden></label>
-            <button class="btn btn--sale" data-reset-db style="height:44px">Сбросить к демо-данным</button>
           </div>
         </div>
       </div>
@@ -1804,6 +2083,19 @@
     if (el('[data-store-sale]')) { openStoreSaleForm(); return; }
     if (el('[data-stock-in]')) { openStockInForm(); return; }
     if ((x = el('[data-quick-sale]'))) { openStoreSaleForm(x.dataset.quickSale); return; }
+    if ((x = el('[data-stock-for]'))) { closeModal(); openStockInForm(x.dataset.stockFor, x.dataset.mode || 'in'); return; }
+    if (el('[data-logo-reset]')) { const f = $('#brandForm'); f.logoUrl.value = ''; $('#brandLogoPreview').src = '/assets/logo.svg'; return; }
+    if ((x = el('[data-ptab]'))) { ui.products.tab = x.dataset.ptab; viewProducts(); return; }
+    if ((x = el('[data-moves]'))) { const p = NS.product(x.dataset.moves); ui.products.tab = 'moves'; ui.products.mq = p ? p.name : ''; ui.products.mtype = ''; viewProducts(); return; }
+    if ((x = el('[data-order-paid]'))) {
+      const id = x.dataset.orderPaid;
+      const paid = x.dataset.v === '1';
+      if (!paid && !confirm('Снять отметку об оплате? Сумма уйдёт из выручки. Делайте это только для исправления ошибки.')) return;
+      call('/api/admin/order-paid', { id, paid }, paid ? `Заказ ${esc(id)} отмечен оплаченным` : `Оплата заказа ${esc(id)} снята`)
+        .then(() => { openOrder(id); render(); }).catch(() => {});
+      return;
+    }
+    if ((x = el('[data-opay]'))) { ui.orders.pay = x.dataset.opay; viewOrders(); return; }
     if ((x = el('[data-pfilter]'))) {
       ui.products.filter = x.dataset.pfilter || 'all';
       if (current === 'products') viewProducts();
@@ -1814,7 +2106,7 @@
     if ((x = el('[data-dup]'))) { openProductForm(x.dataset.dup, true); return; }
     if ((x = el('[data-del]'))) {
       const p = NS.product(x.dataset.del);
-      if (p && confirm(`Удалить «${p.name}»?`)) {
+      if (p && confirm(`Удалить «${p.name}» из каталога?${NS.totalStock(p) ? `\nНа складе ещё ${NS.totalStock(p)} шт.` : ''}\nКопия товара сохранится в архиве базы, но на сайте и в админке его не будет.`)) {
         NS.db.products = NS.products().filter((q) => q.id !== p.id);
         save('Товар удалён', renderProductsTable);
       }
@@ -1824,11 +2116,12 @@
     if ((x = el('[data-order]'))) { openOrder(x.dataset.order); return; }
     if ((x = el('[data-order-status]'))) {
       const id = x.dataset.orderStatus;
-      setOrderStatus(id, x.dataset.v).then(() => { openOrder(id); render(); });
+      setOrderStatus(id, x.dataset.v).then((ok) => { if (ok) { openOrder(id); render(); } });
       return;
     }
     if ((x = el('[data-order-del]'))) {
-      if (!confirm('Удалить заказ? Остатки на складе не изменятся.')) return;
+      const od = NS.db.orders.find((o) => o.id === x.dataset.orderDel);
+      if (!confirm(`Удалить заказ ${x.dataset.orderDel}?\n\nИспользуйте только для ошибочных или тестовых заказов. Для отказа клиента выберите «Отменён».${od && od.stockOut ? '\nТовар вернётся на склад.' : ''}${od && od.paid ? '\nЗаказ оплачен — его сумма уйдёт из отчётов.' : ''}\nКопия заказа сохранится в архиве базы.`)) return;
       call('/api/admin/order-delete', { id: x.dataset.orderDel }, 'Заказ удалён').then(() => { closeModal(); render(); }).catch(() => {});
       return;
     }
@@ -1897,7 +2190,7 @@
       if ((sset.sizes || []).length <= 1) return toast('Должен остаться хотя бы один размер', 'error');
       if (!confirm('Удалить размер «' + sz + '»?')) return;
       sset.sizes.splice(i, 1);
-      NS.products().forEach((p) => { if (p.stock) delete p.stock[sz]; });
+      NS.products().forEach((p) => { Object.keys(p.vstock || {}).forEach((k) => { if (NS.splitKey(k)[1] === sz) delete p.vstock[k]; }); if (p.stock) delete p.stock[sz]; });
       save('Размер удалён');
       return;
     }
@@ -1990,11 +2283,23 @@
       if (!p) return;
       p.visible = t.checked;
       save(p.visible ? 'Товар опубликован на сайте' : 'Товар скрыт с сайта', renderProductsTable);
+    } else if (t.id === 'brandLogoFile' && t.files[0]) {
+      const file = t.files[0];
+      t.value = '';
+      resizeImage(file, 600).then((data) => NS.api('/api/admin/upload', { data })).then((r) => {
+        const f = $('#brandForm');
+        f.logoUrl.value = r.url;
+        $('#brandLogoPreview').src = r.url;
+        toast('Логотип загружен — нажмите «Сохранить бренд»');
+      }).catch((err) => toast('Не удалось загрузить логотип: ' + esc(err.message || ''), 'error'));
+    } else if (t.matches('[data-mtype]')) {
+      ui.products.mtype = t.value; viewProducts();
     } else if (t.matches('[data-pf]') && t.tagName === 'SELECT') {
       ui.products[t.dataset.pf] = t.value;
       renderProductsTable();
     } else if (t.matches('[data-status]')) {
-      setOrderStatus(t.dataset.status, t.value).then(renderOrdersTable);
+      const prev = (NS.db.orders.find((o) => o.id === t.dataset.status) || {}).status;
+      setOrderStatus(t.dataset.status, t.value).then((ok) => { if (ok === false) t.value = prev; renderOrdersTable(); });
     } else if (t.matches('[data-promo-toggle]')) {
       const c = NS.settings.promoCodes[+t.dataset.promoToggle];
       c.active = t.checked;
@@ -2027,6 +2332,11 @@
     }
     const t = e.target;
     if (t.matches('input[data-pf="q"]')) { ui.products.q = t.value; renderProductsTable(); }
+    else if (t.matches('[data-mq]')) {
+      ui.products.mq = t.value;
+      clearTimeout(finSearchTimer);
+      finSearchTimer = setTimeout(() => { viewProducts(); const i = $('#movesSearch'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 300);
+    }
     else if (t.matches('[data-oq]')) { ui.orders.q = t.value; renderOrdersTable(); }
     else if (t.closest('#flashForm')) renderFlashPreview();
   });
@@ -2213,43 +2523,77 @@
         save('Способы оплаты сохранены');
         break;
       }
+      case 'brandForm': {
+        s.brand = Object.assign({}, NS.brand(), {
+          name: f.name.value.trim() || 'Магазин',
+          short: f.short.value.trim() || f.name.value.trim(),
+          tagline: f.tagline.value.trim(),
+          logoUrl: f.logoUrl.value.trim(),
+          accent: f.accentDefault.checked ? '' : f.accent.value,
+          dark: f.darkDefault.checked ? '' : f.dark.value,
+          city: f.city.value.trim(),
+          workHours: f.workHours.value.trim(),
+          whatsapp: f.whatsapp.value.trim(),
+          facebook: f.facebook.value.trim(),
+          tiktok: f.tiktok.value.trim(),
+          youtube: f.youtube.value.trim(),
+          mapUrl: f.mapUrl.value.trim(),
+        });
+        save('Бренд сохранён — сайт обновится у покупателей автоматически').then(applyAdminBrand);
+        break;
+      }
       case 'contactsForm': {
         ['phone', 'email', 'address', 'instagram', 'telegram'].forEach((k) => { s.contacts[k] = f[k].value.trim(); });
         save('Контакты сохранены');
         break;
       }
       case 'storeSaleForm': {
-        const f = form.elements;
-        const productId = f.productId.value;
-        const size = f.size.value;
-        const qty = Math.max(1, Math.round(+f.qty.value || 1));
-        const price = Math.max(0, Math.round(+f.price.value || 0));
-        if (!productId || !size) return toast('Выберите товар и размер', 'error');
-        if (!(price > 0)) return toast('Укажите цену', 'error');
+        const items = [];
+        for (const row of $$('.sale-line', form)) {
+          const id = $('[data-sl="product"]', row).value;
+          const v = $('[data-sl="variant"]', row).value;
+          if (!id || !v) return toast('Выберите товар, цвет и размер в каждой строке', 'error');
+          const [color, size] = NS.splitKey(v);
+          const price = Math.max(0, Math.round(+$('[data-sl="price"]', row).value || 0));
+          if (!(price > 0)) return toast('Укажите цену в каждой строке', 'error');
+          items.push({ id, color, size, qty: Math.max(1, Math.round(+$('[data-sl="qty"]', row).value || 1)), price });
+        }
+        const channel = form.dataset.channel || 'store';
+        if (channel === 'phone' && f.customerPhone.value.replace(/\D/g, '').length < 9) return toast('Для заказа по телефону укажите номер клиента', 'error');
         call('/api/admin/store-sale', {
-          items: [{ id: productId, size, qty, price }],
+          items, channel,
           payment: f.payment.value,
+          paid: f.paid.checked,
+          status: channel === 'phone' ? f.status.value : undefined,
+          discount: Math.max(0, Math.round(+f.discount.value || 0)),
+          shipping: channel === 'phone' ? Math.max(0, Math.round(+f.shipping.value || 0)) : 0,
           customerName: f.customerName.value.trim(),
+          customerPhone: f.customerPhone.value.trim(),
+          address: f.address.value.trim(),
           note: f.note.value.trim(),
-        }, 'Продажа в магазине записана')
-          .then(() => { closeModal(); if (current === 'products') viewProducts(); else render(); })
+        }, channel === 'store' ? 'Продажа записана, товар списан со склада' : 'Заказ создан, товар зарезервирован')
+          .then(() => { closeModal(); render(); })
           .catch(() => {});
         break;
       }
       case 'stockMoveForm': {
-        const f = form.elements;
-        const qty = Math.max(1, Math.round(+f.qty.value || 1));
-        const cost = Math.max(0, Math.round(+f.cost.value || 0));
-        if (!f.productId.value || !f.size.value) return toast('Выберите товар и размер', 'error');
+        const mode = form.dataset.mode || 'in';
+        const productId = f.productId.value;
+        const lines = $$('[data-mv]', form).filter((i) => i.value !== '').map((i) => {
+          const [color, size] = NS.splitKey(i.dataset.mv);
+          return { productId, color, size, qty: Math.max(0, Math.round(+i.value || 0)) };
+        }).filter((l) => mode === 'set' ? NS.variantStock(NS.product(productId), l.color, l.size) !== l.qty : l.qty > 0);
+        if (!lines.length) return toast(mode === 'set' ? 'Остатки не изменились' : 'Впишите количество хотя бы для одного размера', 'error');
+        const reason = f.reason.value.trim();
+        if (mode !== 'in' && reason.length < 3) { f.reason.focus(); return toast('Укажите причину — она сохранится в журнале склада', 'error'); }
+        const qty = lines.reduce((a, l) => a + l.qty, 0);
+        if (mode === 'out' && !confirm(`Списать ${qty} шт. со склада? Причина: ${reason}`)) return;
+        const unitCost = mode === 'in' ? Math.max(0, Math.round(+f.unitCost.value || 0)) : null;
         call('/api/admin/stock-move', {
-          mode: 'in',
-          productId: f.productId.value,
-          size: f.size.value,
-          qty,
-          cost,
-          note: f.note.value.trim(),
-        }, cost ? 'Приход на склад и расход на закупку записаны' : 'Приход на склад записан')
-          .then(() => { closeModal(); if (current === 'products') viewProducts(); else render(); })
+          mode, lines, reason, unitCost,
+          recordExpense: mode === 'in' ? f.recordExpense.checked : false,
+        }, mode === 'in' ? `Поступление записано: +${qty} шт.${unitCost && f.recordExpense.checked ? ', оплата поставщику — в расходах' : ''}` : mode === 'out' ? `Списано ${qty} шт.` : 'Остатки пересчитаны')
+          .then(() => { closeModal(); render(); })
           .catch(() => {});
         break;
       }
@@ -2305,10 +2649,14 @@
         break;
       }
       case 'passForm': {
-        if (f.p1.value.length < 6) return toast('Пароль должен быть не короче 6 символов', 'error');
+        if (f.p1.value.length < 8) return toast('Пароль должен быть не короче 8 символов', 'error');
         if (f.p1.value !== f.p2.value) return toast('Пароли не совпадают', 'error');
         NS.api('/api/admin/password', { password: f.p1.value })
-          .then(() => { defaultPassword = false; updateWarn(); form.reset(); toast('Пароль изменён'); })
+          .then((r) => {
+            // после смены пароля старые сессии закрываются — сохраняем новый токен
+            if (r && r.token) { NS.token = r.token; localStorage.setItem(TOKEN_KEY, r.token); }
+            defaultPassword = false; updateWarn(); form.reset(); toast('Пароль изменён');
+          })
           .catch(onError);
         break;
       }

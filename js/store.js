@@ -7,7 +7,13 @@
   const DEFAULT_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
   const FABRICS = ['Шёлк', 'Атлас', 'Шифон', 'Креп', 'Бархат', 'Кружево', 'Лён', 'Вискоза', 'Органза', 'Сатин'];
   const SILHOUETTES = ['А-силуэт миди', 'Русалка', 'Коктейльное с рукавами-фонариками', 'Макси с длинным рукавом'];
-  const ORDER_STATUSES = ['Новый', 'Подтверждён', 'Отправлен', 'Доставлен', 'Отменён'];
+  const ORDER_STATUSES = ['Новый', 'Подтверждён', 'Отправлен', 'Доставлен', 'Отменён', 'Возврат'];
+  // в этих статусах товар возвращён на склад (заказ не держит остаток)
+  const STOCK_FREE_STATUSES = ['Отменён', 'Возврат'];
+  // статьи расходов, которые являются закупкой товара (не расход для прибыли — себестоимость считается при продаже)
+  const PURCHASE_CATEGORY = 'Закупка товара';
+  // поступления, которые не являются доходом: вложения владельца и возвраты от поставщика
+  const CAPITAL_CATEGORIES = ['Вложение', 'Возврат от поставщика'];
   const PAYMENTS = {
     card: { name: 'Банковская карта', note: 'Uzcard, Humo, Visa, Mastercard' },
     click: { name: 'Click', note: 'Оплата через приложение Click' },
@@ -126,6 +132,60 @@
     return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
   }
 
+  /* Бренд магазина: всё, что меняется при передаче платформы другому магазину */
+  function defaultBrand() {
+    return {
+      name: 'Nargizka Shop',
+      short: 'Nargizka',
+      tagline: 'женские платья премиум-класса',
+      logoUrl: '',
+      accent: '',
+      dark: '',
+      city: 'Ташкент',
+      facebook: '',
+      tiktok: '',
+      youtube: '',
+      whatsapp: '',
+      workHours: '',
+      mapUrl: '',
+    };
+  }
+
+  /* ---------- остатки по вариантам «цвет|размер» ---------- */
+  const vkey = (color, size) => String(color == null ? '' : color) + '|' + String(size == null ? '' : size);
+  function splitKey(k) {
+    const i = String(k).lastIndexOf('|');
+    return i < 0 ? ['', String(k)] : [k.slice(0, i), k.slice(i + 1)];
+  }
+  /**
+   * p.vstock — единственный источник правды по остаткам: { "Цвет|Размер": шт }.
+   * p.stock — производное: сумма по размерам (только по цветам, которые есть у товара).
+   * Старые данные (остаток только по размеру) переносятся на первый цвет товара.
+   */
+  function normalizeStock(p, sizes) {
+    const colors = Array.isArray(p.colors) && p.colors.length ? p.colors : [''];
+    let v = p.vstock && typeof p.vstock === 'object' && !Array.isArray(p.vstock) ? p.vstock : null;
+    if (!v) {
+      v = {};
+      Object.keys(p.stock || {}).forEach((sz) => { v[vkey(colors[0], sz)] = p.stock[sz]; });
+    }
+    const clean = {};
+    Object.keys(v).forEach((k) => {
+      if (String(k).indexOf('|') < 0) return;
+      clean[k] = Math.max(0, Math.round(+v[k] || 0));
+    });
+    p.vstock = clean;
+    const st = {};
+    (sizes || []).forEach((sz) => { st[sz] = 0; });
+    Object.keys(clean).forEach((k) => {
+      const [c, sz] = splitKey(k);
+      if (!colors.includes(c)) return;
+      st[sz] = (st[sz] || 0) + clean[k];
+    });
+    p.stock = st;
+    return p;
+  }
+
   /* ---------- демо-данные (цены в сумах) ---------- */
   function defaultSettings() {
     return {
@@ -146,7 +206,7 @@
       hero: {
         kicker: 'Новая коллекция · Осень 2026',
         title: 'Платья, в которых\nвас запомнят',
-        subtitle: 'Более 50 моделей от коктейльных до свадебных. Сшито для женщин, которые выбирают лучшее.',
+        subtitle: 'Платья от коктейльных до свадебных. Сшито для женщин, которые выбирают лучшее.',
       },
       flash: {
         active: true,
@@ -169,6 +229,7 @@
       categories: DEFAULT_CATEGORIES.map((c) => Object.assign({}, c)),
       colors: Object.assign({}, DEFAULT_COLORS),
       sizes: DEFAULT_SIZES.slice(),
+      brand: defaultBrand(),
       contacts: {
         phone: '+998 (90) 777-77-77',
         email: 'hello@nargizka.uz',
@@ -195,14 +256,27 @@
       const stock = {};
       DEFAULT_SIZES.forEach((s) => { stock[s] = r() < 0.12 ? 0 : Math.floor(r() * 14) + 1; });
       if (i % 9 === 4) DEFAULT_SIZES.forEach((s) => { stock[s] = Math.min(stock[s], 1); });
+      const price = Math.round(((basePrice[cat.id] || 1000000) * (0.75 + r() * 0.7)) / 10000) * 10000;
+      const vstock = {};
+      Object.keys(stock).forEach((sz) => {
+        let left = stock[sz];
+        colors.forEach((c, k) => {
+          const q = k === colors.length - 1 ? left : Math.floor(left / (colors.length - k));
+          vstock[c + '|' + sz] = q;
+          left -= q;
+        });
+      });
       return {
         id: 'p' + (1001 + i),
         sku: 'NS-' + (1001 + i),
         name: 'Платье «' + name + '»',
         category: cat.id,
-        price: Math.round(((basePrice[cat.id] || 1000000) * (0.75 + r() * 0.7)) / 10000) * 10000,
+        price,
+        cost: Math.round((price * 0.45) / 10000) * 10000,
+        brand: 'Nargizka',
         discount: r() < 0.38 ? pick([10, 15, 20, 25, 30, 40, 50]) : 0,
         colors,
+        vstock,
         stock,
         variant: cat.id === 'evening' ? (i % 2 ? 1 : 3) : cat.variant,
         fabric: pick(FABRICS),
@@ -273,14 +347,33 @@
     s.promoCodes = (s.promoCodes || []).map((c) => Object.assign(
       { type: 'percent', value: +c.percent || 0, minSum: 0, active: true, expiresAt: 0, limit: 0, used: 0 }, c,
     )).map((c) => { delete c.percent; return c; });
+    s.brand = Object.assign({}, defaultBrand(), s.brand || {});
     delete s.adminPassword;
-    db.version = 2;
+    db.products.forEach((p) => {
+      p.cost = Math.max(0, Math.round(+p.cost || 0));
+      p.brand = p.brand == null ? '' : String(p.brand);
+      if (!Array.isArray(p.colors)) p.colors = [];
+      normalizeStock(p, s.sizes);
+    });
+    db.orders.forEach((o) => {
+      // старые заказы: оплата по статусу, склад списан, если заказ не отменён
+      if (typeof o.paid !== 'boolean') {
+        o.paid = o.channel === 'store' || ['Подтверждён', 'Отправлен', 'Доставлен'].includes(o.status);
+        o.paidAt = o.paid ? (+o.paidAt || +o.date || 0) : 0;
+      }
+      if (typeof o.stockOut !== 'boolean') o.stockOut = !STOCK_FREE_STATUSES.includes(o.status);
+      if (typeof o.refunded !== 'boolean') o.refunded = false;
+      (o.items || []).forEach((it) => { if (it.cost == null) it.cost = null; });
+    });
+    if (!Array.isArray(db.stockMoves)) db.stockMoves = [];
+    db.version = 3;
     return db;
   }
 
   /* ---------- публичный API ---------- */
   const NS = {
-    DEFAULT_SIZES, FABRICS, SILHOUETTES, ORDER_STATUSES, PAYMENTS,
+    DEFAULT_SIZES, FABRICS, SILHOUETTES, ORDER_STATUSES, PAYMENTS, STOCK_FREE_STATUSES, PURCHASE_CATEGORY, CAPITAL_CATEGORIES,
+    vkey, splitKey, normalizeStock, defaultBrand,
     DEFAULT_CATEGORIES, DEFAULT_COLORS,
     db: null,
     rev: 0,
@@ -299,6 +392,97 @@
     catName(id) { const c = this.CATEGORIES.find((x) => x.id === id); return c ? c.name : id; },
     colorHex(name) { return this.COLORS[name] || '#999999'; },
     totalStock(p) { return Object.values(p.stock || {}).reduce((s, n) => s + (+n || 0), 0); },
+    /* остаток конкретного варианта; товар без цветов хранит остаток под цветом '' */
+    variantStock(p, color, size) {
+      const v = p.vstock || {};
+      if (!(p.colors || []).length) return +v[vkey('', size)] || 0;
+      return +v[vkey(color, size)] || 0;
+    },
+    colorStock(p, color) {
+      return Object.keys(p.vstock || {}).reduce((a, k) => a + (splitKey(k)[0] === color ? +p.vstock[k] || 0 : 0), 0);
+    },
+    /* первый цвет, в котором есть этот размер */
+    colorWithSize(p, size) {
+      return (p.colors || []).find((c) => this.variantStock(p, c, size) > 0) || (p.colors || [])[0] || '';
+    },
+    brand() { return (this.db && this.db.settings && this.db.settings.brand) || defaultBrand(); },
+
+    /**
+     * Управленческий отчёт за период [from, to].
+     * Выручка — по дате оплаты (кассовый метод): неоплаченные заказы в выручку не входят.
+     * Возврат/отмена оплаченного заказа уменьшает выручку и себестоимость в день возврата.
+     * Закупка товара — движение денег, но не расход для прибыли: себестоимость учитывается при продаже.
+     * Не заменяет бухгалтерскую и налоговую отчётность.
+     */
+    financeReport(db, from, to) {
+      const inRange = (t) => +t >= from && +t <= to;
+      const orderCost = (o) => (o.items || []).reduce((a, it) => a + (+it.cost || 0) * (+it.qty || 0), 0);
+      const r = {
+        revenue: 0, refunds: 0, netRevenue: 0, cogs: 0, cogsReturned: 0, netCogs: 0, gross: 0,
+        operating: 0, purchases: 0, otherIncome: 0, capitalIn: 0, net: 0, discounts: 0, promoDiscounts: 0, shipping: 0,
+        paidOrders: 0, refundedOrders: 0, itemsSold: 0, missingCost: 0,
+        cashIn: 0, cashOut: 0, cashNet: 0,
+        unpaidCount: 0, unpaidSum: 0, newCount: 0, ordersCreated: 0,
+        byPayment: {}, byDay: {}, byCategory: {}, byChannel: {},
+      };
+      (db.orders || []).forEach((o) => {
+        if (inRange(o.date) && !STOCK_FREE_STATUSES.includes(o.status)) r.ordersCreated++;
+        if (o.status === 'Новый') r.newCount++;
+        if (!o.paid && !STOCK_FREE_STATUSES.includes(o.status)) { r.unpaidCount++; r.unpaidSum += +o.total || 0; }
+        if (o.paid && inRange(o.paidAt || o.date)) {
+          const cost = orderCost(o);
+          r.revenue += +o.total || 0;
+          r.cogs += cost;
+          r.paidOrders++;
+          r.discounts += +o.autoDiscount || 0;
+          r.promoDiscounts += +o.promoDiscount || 0;
+          r.shipping += +o.shipping || 0;
+          (o.items || []).forEach((it) => { r.itemsSold += +it.qty || 0; if (!(+it.cost > 0)) r.missingCost += +it.qty || 0; });
+          const pay = o.payment || 'Не указано';
+          r.byPayment[pay] = (r.byPayment[pay] || 0) + (+o.total || 0);
+          const ch = o.channel === 'store' ? 'Магазин' : o.channel === 'phone' ? 'По телефону' : 'Сайт';
+          r.byChannel[ch] = (r.byChannel[ch] || 0) + (+o.total || 0);
+          const d = new Date(o.paidAt || o.date); d.setHours(0, 0, 0, 0);
+          const k = d.getTime();
+          const x = r.byDay[k] || (r.byDay[k] = { t: k, revenue: 0, cogs: 0, orders: 0, items: 0, refunds: 0 });
+          x.revenue += +o.total || 0; x.cogs += cost; x.orders++;
+          x.items += (o.items || []).reduce((a, it) => a + (+it.qty || 0), 0);
+        }
+        if (o.paid && o.refunded && inRange(o.refundedAt)) {
+          r.refunds += +o.total || 0;
+          r.cogsReturned += orderCost(o);
+          r.refundedOrders++;
+          const d = new Date(o.refundedAt); d.setHours(0, 0, 0, 0);
+          const k = d.getTime();
+          const x = r.byDay[k] || (r.byDay[k] = { t: k, revenue: 0, cogs: 0, orders: 0, items: 0, refunds: 0 });
+          x.refunds += +o.total || 0; x.cogs -= orderCost(o);
+        }
+      });
+      ((db.finance && db.finance.entries) || []).forEach((e) => {
+        if (!inRange(e.date)) return;
+        const amt = +e.amount || 0;
+        if (e.type === 'in') {
+          if (CAPITAL_CATEGORIES.includes(e.category)) r.capitalIn += amt; else r.otherIncome += amt;
+          return;
+        }
+        if (e.category === PURCHASE_CATEGORY) r.purchases += amt; else r.operating += amt;
+        r.byCategory[e.category] = (r.byCategory[e.category] || 0) + amt;
+      });
+      r.netRevenue = r.revenue - r.refunds;
+      r.netCogs = r.cogs - r.cogsReturned;
+      r.gross = r.netRevenue - r.netCogs;
+      r.net = r.gross - r.operating + r.otherIncome;
+      r.cashIn = r.revenue + r.otherIncome + r.capitalIn;
+      r.cashOut = r.refunds + r.operating + r.purchases;
+      r.cashNet = r.cashIn - r.cashOut;
+      r.margin = r.netRevenue ? Math.round((r.gross / r.netRevenue) * 100) : 0;
+      return r;
+    },
+    /* деньги в кассе на момент ts: стартовый остаток + все движения до ts */
+    cashAt(db, ts) {
+      const f = this.financeReport(db, -Infinity, ts);
+      return Math.round(+((db.finance && db.finance.openingBalance) || 0) + f.cashNet);
+    },
 
     flashActive() {
       const f = this.db.settings.flash;
@@ -418,10 +602,11 @@
         seen.add(p.id);
         const json = JSON.stringify(p);
         const old = this._snap.get(p.id);
-        if (old !== json) upserts.push({ p, base: old ? JSON.parse(old) : null, index: i });
+        if (old !== json) upserts.push({ p, base: old ? JSON.parse(old) : null, index: i, reason: (this.stockReasons || {})[p.id] || '' });
       });
       const deletes = [...this._snap.keys()].filter((id) => !seen.has(id));
       const settings = JSON.stringify(this.db.settings) !== this._settings ? this.db.settings : null;
+      this.stockReasons = {};
       if (!upserts.length && !deletes.length && !settings) return Promise.resolve(true);
       return this.api('/api/admin/save', { upserts, deletes, settings }).then((d) => {
         this.apply(d);

@@ -69,7 +69,17 @@
   }
   function returnText() {
     const n = +NS.settings.returnDays || 0;
-    return `${n} ${plural(n, 'днѝ', 'дней', 'дней')}`;
+    if (I18N.lang === 'uz') return `${n} kun`;
+    return `${n} ${plural(n, 'дня', 'дней', 'дней')}`;
+  }
+  /* тексты главного баннера: из админки (Скидки и акции → Главный баннер) для русской версии */
+  function heroText() {
+    const h = (NS.settings && NS.settings.hero) || {};
+    if (I18N.lang === 'ru' && (h.title || h.subtitle || h.kicker)) {
+      const lines = String(h.title || '').split('\n').map((x) => x.trim()).filter(Boolean);
+      return { kicker: h.kicker || '', t1: lines[0] || '', t2: lines.slice(1).join(' '), sub: h.subtitle || '' };
+    }
+    return { kicker: t('hero.kicker'), t1: t('hero.title1'), t2: t('hero.title2'), sub: t('hero.sub') };
   }
   function stars(r) {
     const full = Math.round(r);
@@ -98,7 +108,7 @@
   function totals(delivery) {
     const valid = promo && promoObj && promoObj.code === promo ? promoObj : null;
     const t = NS.quote(cartLines(), valid, delivery);
-    if (promo && !valid) t.promoError = 'Промокод не найден или больше не дейѝтвует';
+    if (promo && !valid) t.promoError = 'Промокод не найден или больше не действует';
     return t;
   }
   function clearPromo() {
@@ -122,12 +132,12 @@
     qty = qty || 1;
     const p = NS.product(id);
     if (!p) return false;
-    const avail = +p.stock[size] || 0;
+    const avail = NS.variantStock(p, color, size);
     const key = id + '|' + color + '|' + size;
     const line = cart.find((l) => l.key === key);
     const inCart = line ? line.qty : 0;
     if (inCart + qty > avail) {
-      toast(avail ? `В наличии только ${avail} шт. размера ${size}` : 'Этого размера ѝейчаѝ нет в наличии', 'error');
+      toast(avail ? `В наличии только ${avail} шт. (${[color, size].filter(Boolean).join(', ')})` : 'Этого размера в выбранном цвете сейчас нет', 'error');
       return false;
     }
     if (line) line.qty += qty; else cart.push({ key, id, color, size, qty });
@@ -180,12 +190,12 @@
     const pct = freeFrom > 0 ? Math.min(100, ((freeFrom - tot.toFree) / freeFrom) * 100) : 100;
     body.innerHTML = `
       <div class="ship-bar">${tot.toFree > 0
-        ? `До беѝплатной доѝтавки оѝталоѝь <b>${NS.money(tot.toFree)}</b>`
-        : '<b>Поздравлѝем!</b> Доѝтавка будет беѝплатной'}
+        ? `До бесплатной доставки осталось <b>${NS.money(tot.toFree)}</b>`
+        : '<b>Поздравляем!</b> Доставка будет бесплатной'}
         <div class="ship-bar__track"><i style="width:${pct}%"></i></div>
       </div>
-      ${tot.nextTier ? `<div class="tier-hint">Добавьте товаров ещё на <b>${NS.money(tot.toNext)}</b> — получите ѝкидку <b>−${tot.nextTier.percent}%</b> на веѝь заказ</div>` : ''}
-      ${tot.tier ? `<div class="tier-hint tier-hint--on">Ваша ѝкидка от ѝуммы заказа: <b>−${tot.tier.percent}%</b></div>` : ''}
+      ${tot.nextTier ? `<div class="tier-hint">Добавьте товаров ещё на <b>${NS.money(tot.toNext)}</b> — получите скидку <b>−${tot.nextTier.percent}%</b> на весь заказ</div>` : ''}
+      ${tot.tier ? `<div class="tier-hint tier-hint--on">Ваша скидка от суммы заказа: <b>−${tot.tier.percent}%</b></div>` : ''}
       ${tot.lines.map(lineItemHTML).join('')}`;
     foot.innerHTML = `
       ${promoBlockHTML(tot)}
@@ -200,9 +210,9 @@
     return `<div class="totals">
       <div><span>Товары</span><span>${NS.money(t.original)}</span></div>
       ${t.saleSaving ? `<div class="is-discount"><span>Скидка на товары</span><span>−${NS.money(t.saleSaving)}</span></div>` : ''}
-      ${t.autoDiscount ? `<div class="is-discount"><span>Скидка от ѝуммы заказа −${t.tier.percent}%</span><span>−${NS.money(t.autoDiscount)}</span></div>` : ''}
+      ${t.autoDiscount ? `<div class="is-discount"><span>Скидка от суммы заказа −${t.tier.percent}%</span><span>−${NS.money(t.autoDiscount)}</span></div>` : ''}
       ${t.promoDiscount ? `<div class="is-discount"><span>Промокод ${esc(t.code.code)}</span><span>−${NS.money(t.promoDiscount)}</span></div>` : ''}
-      <div><span>Доѝтавка</span><span>${t.shipping ? NS.money(t.shipping) : 'Беѝплатно'}</span></div>
+      <div><span>Доставка</span><span>${t.shipping ? NS.money(t.shipping) : 'Бесплатно'}</span></div>
       <div class="total"><span>${label}</span><span>${NS.money(t.total)}</span></div>
     </div>`;
   }
@@ -220,7 +230,7 @@
         <div class="line-item__bottom">
           <div class="qty qty--sm">
             <button data-line="${esc(l.key)}" data-step="-1" aria-label="Меньше">−</button>
-            <input value="${l.qty}" readonly aria-label="Количеѝтво">
+            <input value="${l.qty}" readonly aria-label="Количество">
             <button data-line="${esc(l.key)}" data-step="1" aria-label="Больше">+</button>
           </div>
           <div class="price">
@@ -314,7 +324,7 @@
     </div></section>`;
   }
 
-  /* ---------- главнаѝ ---------- */
+  /* ---------- главная ---------- */
   function renderHome() {
     const s = NS.settings;
     const all = NS.visibleProducts();
@@ -334,9 +344,9 @@
         <div class="grain"></div>
         <div class="container hero__inner">
           <div class="hero__copy">
-            <div class="hero__kicker"><span>${esc(t('hero.kicker'))}</span></div>
-            <h1 class="hero__title"><span class="hero__line"><span>${esc(t('hero.title1'))}</span></span><span class="hero__line"><span>${esc(t('hero.title2'))}</span></span></h1>
-            <p class="hero__sub">${esc(t('hero.sub'))}</p>
+            <div class="hero__kicker"><span>${esc(heroText().kicker)}</span></div>
+            <h1 class="hero__title"><span class="hero__line"><span>${esc(heroText().t1)}</span></span>${heroText().t2 ? `<span class="hero__line"><span>${esc(heroText().t2)}</span></span>` : ''}</h1>
+            <p class="hero__sub">${esc(heroText().sub)}</p>
             <div class="hero__ctas">
               <a href="#/catalog?sort=new" class="btn btn--light">${t('btn.viewCollection')}</a>
               ${maxSale ? `<a href="#/catalog?sale=1" class="btn btn--gold">${t('btn.saleTo', { n: maxSale })}</a>` : ''}
@@ -360,21 +370,21 @@
       </section>` : ''}
 
       <div class="marquee" aria-hidden="true"><div class="marquee__track">
-        ${[0, 1].map(() => `<div class="marquee__group">${['Nargizka', 'Maison de Robes', 'Haute Couture', 'Evening', 'Bridal', 'Cocktail'].map((w) => `<span>${w}</span><i>✦</i>`).join('')}</div>`).join('')}
+        ${[0, 1].map(() => `<div class="marquee__group">${[NS.brand().short, 'Maison de Robes', 'Haute Couture', 'Evening', 'Bridal', 'Cocktail'].map((w) => `<span>${w}</span><i>✦</i>`).join('')}</div>`).join('')}
       </div></div>
 
       <section class="manifesto"><div class="container manifesto__inner">
         <div class="section__kicker">${t('home.manifestoKicker')}</div>
         <p class="manifesto__text">${t('home.manifesto')}</p>
         <div class="stats">
-          <div><b data-count="${all.length}">${all.length}</b><span>${t('home.statModels')}</span></div>
+          ${all.length ? `<div><b data-count="${all.length}">${all.length}</b><span>${t('home.statModels')}</span></div>` : ''}
           <div><b data-count="${NS.CATEGORIES.length}">${NS.CATEGORIES.length}</b><span>${t('home.statCats')}</span></div>
           <div><b data-count="${Object.keys(NS.COLORS).length}">${Object.keys(NS.COLORS).length}</b><span>${t('home.statColors')}</span></div>
           <div><b data-count="${+s.returnDays}">${+s.returnDays}</b><span>${t('home.statDays')}</span></div>
         </div>
       </div></section>
 
-      <section class="collections">
+      <section class="collections" ${all.length ? '' : 'hidden'}>
         <div class="container section__head">
           <div><div class="section__kicker">${t('home.collections')}</div><h2 class="section__title">${t('home.chooseLook')}</h2></div>
           <a href="#/catalog" class="btn btn--outline" style="height:44px">${t('btn.allDresses')}</a>
@@ -414,18 +424,18 @@
         <div class="grid">${news.map(card).join('')}</div>
       </div></section>` : ''}
 
-      ${railSection(t('home.buyersChoice'), t('home.bestsellers'), 'railHits', hits, '#/catalog?sort=popular')}
+      ${hits.length ? railSection(t('home.buyersChoice'), t('home.bestsellers'), 'railHits', hits, '#/catalog?sort=popular') : ''}
 
       <section class="section section--tight section--paper"><div class="container perks">
         <div class="perk">${ICONS.truck}<div><b>${t('home.perkShip')}</b><span>${t('home.perkShipSub', { sum: NS.money(s.freeShippingFrom) })}</span></div></div>
         <div class="perk">${ICONS.hanger}<div><b>${t('home.perkFit')}</b><span>${t('home.perkFitSub')}</span></div></div>
-        <div class="perk">${ICONS.ret}<div><b>${t('home.perkRet')}</b><span>${t('home.perkRetSub')}</span></div></div>
+        <div class="perk">${ICONS.ret}<div><b>${t('home.perkRet', { days: returnText() })}</b><span>${t('home.perkRetSub')}</span></div></div>
         <div class="perk">${ICONS.gem}<div><b>${t('home.perkQual')}</b><span>${t('home.perkQualSub')}</span></div></div>
       </div></section>
 
       <section class="newsletter">
         <div class="section__kicker">${t('home.club')}</div>
-        <h2>${welcome ? NS.promoLabel(welcome) + ' на первый заказ' : 'Будьте в курѝе новинок'}</h2>
+        <h2>${welcome ? NS.promoLabel(welcome) + ' на первый заказ' : 'Будьте в курсе новинок'}</h2>
         <p>${t('home.clubText')}</p>
         <form class="inline-form" data-subscribe>
           <input class="input" type="email" name="email" required placeholder="${t('home.emailPh')}" aria-label="E-mail">
@@ -444,7 +454,7 @@
     return t('catalog.title');
   }
 
-  // проѝтое «ѝтемминг»-ѝравнение: «вечернее» найдёт «Вечерние»
+  // простое «стемминг»-сравнение: «вечернее» найдёт «Вечерние»
   function matchesQuery(p, q) {
     const hay = [p.name, catName(p.category), p.fabric, p.colors.join(' '), p.sku, p.description].join(' ').toLowerCase();
     return q.toLowerCase().split(/\s+/).filter(Boolean).every((w) => hay.includes(w.length > 5 ? w.slice(0, w.length - 2) : w));
@@ -496,7 +506,7 @@
 
     $('#catalogRoot').innerHTML = `
       <div class="page-head">
-        <div class="crumbs"><a href="#/">Главнаѝ</a> / <a href="#/catalog">${t('crumbs.catalog')}</a>${st.cats.length === 1 ? ' / ' + catName(st.cats[0]) : ''}</div>
+        <div class="crumbs"><a href="#/">Главная</a> / <a href="#/catalog">${t('crumbs.catalog')}</a>${st.cats.length === 1 ? ' / ' + catName(st.cats[0]) : ''}</div>
         <h1 class="page-title">${catalogTitle(st)}<sup>${list.length}</sup></h1>
         <div class="chips">
           <button class="chip ${!st.cats.length && !st.sale ? 'is-on' : ''}" data-f="allcats">${t('catalog.chipAll')}</button>
@@ -514,7 +524,7 @@
             <label class="toggle-row">${t('catalog.inStock')}
               <span class="switch"><input type="checkbox" data-f="instock" ${st.inStock ? 'checked' : ''}><span></span></span></label>
           </div>
-          <div class="filter"><h4>Категориѝ</h4>
+          <div class="filter"><h4>Категория</h4>
             ${NS.CATEGORIES.map((c) => `<label class="check"><input type="checkbox" data-f="cat" data-v="${c.id}" ${st.cats.includes(c.id) ? 'checked' : ''}>${c.name}<small>${all.filter((p) => p.category === c.id).length}</small></label>`).join('')}
           </div>
           <div class="filter"><h4>${t('catalog.size')}</h4>
@@ -544,7 +554,9 @@
           </div>
           ${shown.length
             ? `<div class="grid">${shown.map(card).join('')}</div>`
-            : `<div class="empty"><h3>${t('catalog.empty')}</h3><p>${t('catalog.emptyHint')}</p><button class="btn btn--dark" data-f="reset">${t('btn.reset')}</button></div>`}
+            : NS.visibleProducts().length
+              ? `<div class="empty"><h3>${t('catalog.empty')}</h3><p>${t('catalog.emptyHint')}</p><button class="btn btn--dark" data-f="reset">${t('btn.reset')}</button></div>`
+              : `<div class="empty"><h3>${t('catalog.soon')}</h3><p>${t('catalog.soonHint')}</p><a class="btn btn--dark" href="#/">${t('crumbs.home')}</a></div>`}
           ${list.length > shown.length ? `
             <div class="more">
               <p>${t('catalog.shown', { n: shown.length, total: list.length })}</p>
@@ -580,7 +592,7 @@
     if (keepOpen) $('#filters').classList.add('is-open');
   }
 
-  /* ---------- ѝтраница товара ---------- */
+  /* ---------- страница товара ---------- */
   function renderProduct(id) {
     const p = NS.product(id);
     if (!p || !p.visible) return renderNotFound();
@@ -594,12 +606,16 @@
     const related = NS.visibleProducts().filter((x) => x.category === p.category && x.id !== p.id).slice(0, 4);
     const recentList = recent.filter((x) => x !== id).map((x) => NS.product(x)).filter((x) => x && x.visible).slice(0, 8);
     const inStock = NS.totalStock(p) > 0;
-    const state = { color: 0, size: null, qty: 1 };
+    // первый цвет, у которого есть остаток
+    const firstColor = Math.max(0, p.colors.findIndex((c) => NS.colorStock(p, c) > 0));
+    const state = { color: firstColor, size: null, qty: 1 };
+    const curColor = () => p.colors[state.color] || '';
+    const vs = (sz) => NS.variantStock(p, curColor(), sz);
 
     app.innerHTML = `
       <div class="container">
         <div class="page-head" style="padding-bottom:0">
-          <div class="crumbs"><a href="#/">Главнаѝ</a> / <a href="#/catalog">${t('crumbs.catalog')}</a> / <a href="#/catalog?cat=${p.category}">${catName(p.category)}</a> / ${esc(p.name)}</div>
+          <div class="crumbs"><a href="#/">Главная</a> / <a href="#/catalog">${t('crumbs.catalog')}</a> / <a href="#/catalog?cat=${p.category}">${catName(p.category)}</a> / ${esc(p.name)}</div>
         </div>
         <div class="pdp">
           <div class="gallery">
@@ -612,26 +628,26 @@
             <h1>${esc(p.name)}</h1>
             <div class="rating"><span class="stars">${stars(p.rating)}</span> ${p.rating} · ${p.reviews} ${plural(p.reviews, 'отзыв', 'отзыва', 'отзывов')}</div>
             ${priceHTML(p)}
-            <div class="alt-price">≈ ${NS.altMoney(NS.finalPrice(p))}${NS.cur === 'UZS' ? ` по курѝу ${NS.money(NS.usdRate(), 'UZS')} за $1` : ''}</div>
-            ${d ? `<div class="save-note">Вы ѝкономите ${NS.money(p.price - NS.finalPrice(p))}</div>` : ''}
-            ${NS.inFlash(p) ? `<div class="flash-box"><span><b>${esc(s.flash.title)}</b> — цена дейѝтвует ещё</span>${timerHTML(s.flash.endsAt, true)}</div>` : ''}
+            <div class="alt-price">≈ ${NS.altMoney(NS.finalPrice(p))}${NS.cur === 'UZS' ? ` по курсу ${NS.money(NS.usdRate(), 'UZS')} за $1` : ''}</div>
+            ${d ? `<div class="save-note">Вы экономите ${NS.money(p.price - NS.finalPrice(p))}</div>` : ''}
+            ${NS.inFlash(p) ? `<div class="flash-box"><span><b>${esc(s.flash.title)}</b> — цена действует ещё</span>${timerHTML(s.flash.endsAt, true)}</div>` : ''}
             ${p.sold > 50 ? `<div class="sold-note">Купили ${p.sold} раз</div>` : ''}
 
             <div class="opt">
-              <div class="opt__head"><span>Цвет: <b id="colorName">${esc(p.colors[0])}</b></span></div>
-              <div class="color-grid">${p.colors.map((c, i) => `<button class="swatch-lg ${i === 0 ? 'is-on' : ''}" data-color="${i}" style="background:${NS.colorHex(c)}" title="${esc(c)}" aria-label="${esc(c)}"></button>`).join('')}</div>
+              <div class="opt__head"><span>Цвет: <b id="colorName">${esc(p.colors[firstColor] || '')}</b></span></div>
+              <div class="color-grid">${p.colors.map((c, i) => `<button class="swatch-lg ${i === firstColor ? 'is-on' : ''} ${NS.colorStock(p, c) ? '' : 'is-out'}" data-color="${i}" style="background:${NS.colorHex(c)}" title="${esc(c)}${NS.colorStock(p, c) ? '' : ' — нет в наличии'}" aria-label="${esc(c)}"></button>`).join('')}</div>
             </div>
 
             <div class="opt">
               <div class="opt__head"><span>Размер: <b id="sizeName">не выбран</b></span><button class="link-btn" data-modal="sizes">Таблица размеров</button></div>
-              <div class="sizes-row" id="sizesRow">${sizes.map((sz) => `<button class="size-btn" data-size-pick="${sz}" ${+p.stock[sz] ? '' : 'disabled'}>${sz}</button>`).join('')}</div>
+              <div class="sizes-row" id="sizesRow">${sizes.map((sz) => `<button class="size-btn" data-size-pick="${sz}" ${vs(sz) ? '' : 'disabled'}>${sz}</button>`).join('')}</div>
               <div class="stock-note" id="stockNote"></div>
             </div>
 
             <div class="buy-row">
               <div class="qty">
                 <button data-pqty="-1" aria-label="Меньше">−</button>
-                <input id="pQty" value="1" readonly aria-label="Количеѝтво">
+                <input id="pQty" value="1" readonly aria-label="Количество">
                 <button data-pqty="1" aria-label="Больше">+</button>
               </div>
               <button class="btn btn--dark" id="addBtn" ${inStock ? '' : 'disabled'}>${inStock ? 'Добавить в корзину' : 'Нет в наличии'}</button>
@@ -639,17 +655,17 @@
             </div>
 
             <div class="pdp-perks">
-              <div>${ICONS.truck}<span>Беѝплатнаѝ доѝтавка от ${NS.money(s.freeShippingFrom)}, по городу — 1–2 днѝ</span></div>
+              <div>${ICONS.truck}<span>Бесплатная доставка от ${NS.money(s.freeShippingFrom)}, по городу — 1–2 дня</span></div>
               <div>${ICONS.hanger}<span>Примерка перед оплатой — курьер подождёт 15 минут</span></div>
               <div>${ICONS.ret}<span>Возврат в течение ${returnText()}</span></div>
             </div>
 
-            <details class="acc" open><summary>Опиѝание</summary><div class="acc__body">${esc(p.description)}</div></details>
-            <details class="acc"><summary>Соѝтав и уход</summary><div class="acc__body"><ul>
-              <li>Оѝновнаѝ ткань: ${esc(p.fabric)}</li><li>Подкладка: виѝкоза 100%</li>
-              <li>Деликатнаѝ химчиѝтка или ручнаѝ ѝтирка при 30 °C</li><li>Гладить ѝ изнанки через ткань</li></ul></div></details>
-            <details class="acc"><summary>Доѝтавка и оплата</summary><div class="acc__body">
-              Курьерѝкаѝ доѝтавка — ${NS.money(s.shippingCost)}, беѝплатно от ${NS.money(s.freeShippingFrom)}. Экѝпреѝѝ за 3 чаѝа — ${NS.money(s.expressCost)}.${s.pickupEnabled ? ' Самовывоз из бутика — беѝплатно.' : ''}
+            <details class="acc" open><summary>Описание</summary><div class="acc__body">${esc(p.description)}</div></details>
+            <details class="acc"><summary>Состав и уход</summary><div class="acc__body"><ul>
+              <li>Основная ткань: ${esc(p.fabric)}</li><li>Подкладка: вискоза 100%</li>
+              <li>Деликатная химчистка или ручная стирка при 30 °C</li><li>Гладить с изнанки через ткань</li></ul></div></details>
+            <details class="acc"><summary>Доставка и оплата</summary><div class="acc__body">
+              Курьерская доставка — ${NS.money(s.shippingCost)}, бесплатно от ${NS.money(s.freeShippingFrom)}. Экспресс за 3 часа — ${NS.money(s.expressCost)}.${s.pickupEnabled ? ' Самовывоз из бутика — бесплатно.' : ''}
               Оплата: ${paymentList().map((k) => NS.PAYMENTS[k].name).join(', ')}. Возврат в течение ${returnText()}.</div></details>
           </div>
         </div>
@@ -658,7 +674,7 @@
       ${related.length ? `<section class="section section--paper"><div class="container">
         <div class="section__head"><div><div class="section__kicker">Дополните образ</div><h2 class="section__title">Похожие модели</h2></div></div>
         <div class="grid">${related.map(card).join('')}</div></div></section>` : ''}
-      ${recentList.length ? railSection('Иѝториѝ', 'Вы недавно ѝмотрели', 'railRecent', recentList) : ''}`;
+      ${recentList.length ? railSection('История', 'Вы недавно смотрели', 'railRecent', recentList) : ''}`;
 
     const setMain = (i) => {
       $('#mainImg img').src = gallery[i];
@@ -666,9 +682,9 @@
     };
     const updateStock = () => {
       const note = $('#stockNote');
-      const n = +p.stock[state.size];
+      const n = vs(state.size);
       note.className = 'stock-note ' + (n <= 3 ? 'stock-note--low' : 'stock-note--ok');
-      note.textContent = n <= 3 ? `Оѝталоѝь вѝего ${n} шт. — уѝпейте заказать` : 'В наличии';
+      note.textContent = n <= 3 ? `Осталось всего ${n} шт. — успейте заказать` : 'В наличии';
       if (state.qty > n) { state.qty = n; $('#pQty').value = n; }
     };
 
@@ -681,18 +697,26 @@
         $$('[data-color]').forEach((b) => b.classList.toggle('is-on', b === t));
         $('#colorName').textContent = p.colors[state.color];
         setMain(Math.min(state.color, gallery.length - 1));
+        // размеры зависят от цвета: недоступные гасим, выбранный сбрасываем, если его нет в этом цвете
+        $$('[data-size-pick]').forEach((b) => { b.disabled = !vs(b.dataset.sizePick); });
+        if (state.size && !vs(state.size)) {
+          state.size = null;
+          $$('[data-size-pick]').forEach((b) => b.classList.remove('is-on'));
+          $('#sizeName').textContent = 'не выбран';
+          $('#stockNote').textContent = '';
+        } else if (state.size) updateStock();
       } else if (t.dataset.sizePick) {
         state.size = t.dataset.sizePick;
         $$('[data-size-pick]').forEach((b) => b.classList.toggle('is-on', b === t));
         $('#sizeName').textContent = state.size;
         updateStock();
       } else if (t.dataset.pqty) {
-        const max = state.size ? +p.stock[state.size] : 10;
+        const max = state.size ? vs(state.size) : 10;
         state.qty = Math.min(Math.max(1, state.qty + +t.dataset.pqty), Math.max(1, max));
         $('#pQty').value = state.qty;
       } else if (t.id === 'addBtn') {
         if (!state.size) {
-          toast('Пожалуйѝта, выберите размер', 'error');
+          toast('Пожалуйста, выберите размер', 'error');
           $('#sizesRow').animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-6px)' }, { transform: 'translateX(6px)' }, { transform: 'translateX(0)' }], { duration: 300 });
           return;
         }
@@ -712,10 +736,10 @@
   function renderWishlist() {
     const list = wish.map((id) => NS.product(id)).filter((p) => p && p.visible);
     app.innerHTML = `<div class="container" style="padding-bottom:80px">
-      <div class="page-head"><div class="crumbs"><a href="#/">Главнаѝ</a> / Избранное</div>
+      <div class="page-head"><div class="crumbs"><a href="#/">Главная</a> / Избранное</div>
         <h1 class="page-title">Избранное<sup>${list.length}</sup></h1></div>
       ${list.length ? `<div class="grid">${list.map(card).join('')}</div>`
-        : '<div class="empty"><h3>Здеѝь пока пуѝто</h3><p>Нажимайте ♡ на понравившихѝѝ платьѝх, чтобы ѝохранить их.</p><a class="btn btn--dark" href="#/catalog">В каталог</a></div>'}
+        : '<div class="empty"><h3>Здесь пока пусто</h3><p>Нажимайте ♡ на понравившихся платьях, чтобы сохранить их.</p><a class="btn btn--dark" href="#/catalog">В каталог</a></div>'}
     </div>`;
   }
 
@@ -728,23 +752,23 @@
     const s = NS.settings;
     const draft = LS.get('ns_checkout', {});
     app.innerHTML = `<div class="container">
-      <div class="page-head"><div class="crumbs"><a href="#/">Главнаѝ</a> / Оформление заказа</div><h1 class="page-title">Оформление заказа</h1></div>
+      <div class="page-head"><div class="crumbs"><a href="#/">Главная</a> / Оформление заказа</div><h1 class="page-title">Оформление заказа</h1></div>
       <form class="checkout" id="coForm" novalidate>
         <div>
           <div class="co-block"><h3><i>1</i>Контактные данные</h3>
             <div class="form-grid">
-              <div class="field"><label>Имѝ и фамилиѝ *</label><input class="input" name="name" value="${esc(draft.name)}" autocomplete="name"><div class="err">Укажите имѝ</div></div>
+              <div class="field"><label>Имя и фамилия *</label><input class="input" name="name" value="${esc(draft.name)}" autocomplete="name"><div class="err">Укажите имя</div></div>
               <div class="field"><label>Телефон *</label><input class="input" name="phone" value="${esc(draft.phone)}" placeholder="+998 (__) ___-__-__" autocomplete="tel"><div class="err">Введите корректный номер</div></div>
               <div class="field full"><label>E-mail</label><input class="input" name="email" type="email" value="${esc(draft.email)}" autocomplete="email"><div class="err">Некорректный e-mail</div></div>
             </div>
           </div>
-          <div class="co-block"><h3><i>2</i>Доѝтавка</h3>
-            <label class="radio-card"><input type="radio" name="delivery" value="courier" checked><div>Курьер<small>1–2 днѝ, примерка перед оплатой</small></div><b>${NS.money(s.shippingCost)} / беѝплатно от ${NS.money(s.freeShippingFrom)}</b></label>
-            <label class="radio-card"><input type="radio" name="delivery" value="express"><div>Экѝпреѝѝ за 3 чаѝа<small>По городу, в день заказа</small></div><b>${NS.money(s.expressCost)}</b></label>
-            ${s.pickupEnabled ? `<label class="radio-card"><input type="radio" name="delivery" value="pickup"><div>Самовывоз из бутика<small>${esc(s.contacts.address)}</small></div><b>Беѝплатно</b></label>` : ''}
+          <div class="co-block"><h3><i>2</i>Доставка</h3>
+            <label class="radio-card"><input type="radio" name="delivery" value="courier" checked><div>Курьер<small>1–2 дня, примерка перед оплатой</small></div><b>${NS.money(s.shippingCost)} / бесплатно от ${NS.money(s.freeShippingFrom)}</b></label>
+            <label class="radio-card"><input type="radio" name="delivery" value="express"><div>Экспресс за 3 часа<small>По городу, в день заказа</small></div><b>${NS.money(s.expressCost)}</b></label>
+            ${s.pickupEnabled ? `<label class="radio-card"><input type="radio" name="delivery" value="pickup"><div>Самовывоз из бутика<small>${esc(s.contacts.address)}</small></div><b>Бесплатно</b></label>` : ''}
             <div class="form-grid" id="addrFields" style="margin-top:8px">
               <div class="field"><label>Город *</label><input class="input" name="city" value="${esc(draft.city)}"><div class="err">Укажите город</div></div>
-              <div class="field"><label>Ндреѝ *</label><input class="input" name="address" value="${esc(draft.address)}" placeholder="Улица, дом, квартира"><div class="err">Укажите адреѝ</div></div>
+              <div class="field"><label>Адрес *</label><input class="input" name="address" value="${esc(draft.address)}" placeholder="Улица, дом, квартира"><div class="err">Укажите адрес</div></div>
             </div>
             <div class="field" style="margin-top:14px"><label>Комментарий к заказу</label><textarea class="input" name="comment" rows="3">${esc(draft.comment)}</textarea></div>
           </div>
@@ -767,7 +791,7 @@
         <div style="margin-top:16px">${promoBlockHTML(t)}</div>
         ${totalsHTML(t, 'К оплате')}
         <button class="btn btn--dark btn--block" type="submit" style="margin-top:18px">Подтвердить заказ</button>
-        <div class="secure">${ICONS.lock} Данные защищены. Оплата поѝле подтверждениѝ менеджером.</div>`;
+        <div class="secure">${ICONS.lock} Данные защищены. Оплата после подтверждения менеджером.</div>`;
     };
     renderSummary();
     refreshCheckout = renderSummary;
@@ -809,8 +833,8 @@
 
     const tot = totals(els.delivery.value);
     for (const l of tot.lines) {
-      if ((+l.p.stock[l.size] || 0) < l.qty) {
-        toast(`${esc(l.p.name)} (${l.size}): ${t('checkout.errStock')} (${+l.p.stock[l.size] || 0})`, 'error');
+      if (NS.variantStock(l.p, l.color, l.size) < l.qty) {
+        toast(`${esc(l.p.name)} (${l.size}): ${t('checkout.errStock')} (${NS.variantStock(l.p, l.color, l.size)})`, 'error');
         return;
       }
     }
@@ -867,7 +891,7 @@
   const MODALS = {
     sizes() {
       return `<h2>${t('modal.sizesTitle')}</h2>
-        <table class="table"><thead><tr><th>EU</th><th>RU</th><th>Грудь</th><th>Талиѝ</th><th>Бёдра</th></tr></thead>
+        <table class="table"><thead><tr><th>EU</th><th>RU</th><th>Грудь</th><th>Талия</th><th>Бёдра</th></tr></thead>
         <tbody>
           <tr><td>XS</td><td>40</td><td>80–84</td><td>60–64</td><td>86–90</td></tr>
           <tr><td>S</td><td>42</td><td>84–88</td><td>64–68</td><td>90–94</td></tr>
@@ -882,7 +906,7 @@
       return `<h2>${t('modal.deliveryTitle')}</h2>
         <p>${t('modal.deliveryText1', { ship: NS.money(s.shippingCost), free: NS.money(s.freeShippingFrom) })}</p>
         <p style="margin-top:10px">${t('modal.deliveryText2', { express: NS.money(s.expressCost) })}</p>
-        <p style="margin-top:10px">${t('modal.deliveryText3')}</p>`;
+        <p style="margin-top:10px">${t('modal.deliveryText3', { days: returnText() })}</p>`;
     },
   };
 
@@ -918,6 +942,26 @@
   }
 
   let announceTimer;
+  /* название, логотип и цвета магазина из настроек (Админ → Настройки → Бренд) */
+  function applyBrand() {
+    const b = NS.brand();
+    I18N.setBrand(b);
+    const short = String(b.short || b.name);
+    const rest = String(b.name).toLowerCase().startsWith(short.toLowerCase()) ? String(b.name).slice(short.length).trim() : '';
+    $$('.brand').forEach((el) => {
+      el.setAttribute('aria-label', b.name);
+      const img = el.querySelector('.brand__logo');
+      if (img) img.src = b.logoUrl || 'assets/logo.svg';
+      const word = el.querySelector('.brand__word');
+      if (word) word.innerHTML = esc(short.toUpperCase()) + (rest ? `<small>${esc(rest.toUpperCase())}</small>` : '');
+    });
+    const copy = $('#brandCopy');
+    if (copy) copy.textContent = b.name;
+    const root = document.documentElement.style;
+    if (b.accent) { root.setProperty('--gold', b.accent); root.setProperty('--gold-2', NS.shade(b.accent, 0.25)); } else { root.removeProperty('--gold'); root.removeProperty('--gold-2'); }
+    if (b.dark) root.setProperty('--ink', b.dark); else root.removeProperty('--ink');
+  }
+
   function renderChrome() {
     const s = NS.settings;
     const items = (s.announcements || []).filter(Boolean);
@@ -961,11 +1005,23 @@
       <h5>${t('nav.account')}</h5>
       <a href="#/wishlist">${t('nav.wish')} <span>›</span></a>`;
 
+    applyBrand();
     $('#footerCats').innerHTML = NS.CATEGORIES.slice(0, 6).map((c) => `<a href="#/catalog?cat=${c.id}">${catName(c.id)}</a>`).join('');
     $('#footerContacts').innerHTML = `<a href="tel:${esc(s.contacts.phone.replace(/[^\d+]/g, ''))}">${esc(s.contacts.phone)}</a>
       <a href="mailto:${esc(s.contacts.email)}">${esc(s.contacts.email)}</a>
       <a>${esc(s.contacts.address)}</a><a>Instagram: ${esc(s.contacts.instagram)}</a>
-      ${s.contacts.telegram ? `<a href="https://t.me/${esc(s.contacts.telegram.replace(/^@/, ''))}" target="_blank" rel="noopener">Telegram: ${esc(s.contacts.telegram)}</a>` : ''}`;
+      ${s.contacts.telegram ? `<a href="https://t.me/${esc(s.contacts.telegram.replace(/^@/, ''))}" target="_blank" rel="noopener">Telegram: ${esc(s.contacts.telegram)}</a>` : ''}
+      ${(() => {
+        const b = NS.brand();
+        const links = [];
+        if (b.whatsapp) links.push(`<a href="https://wa.me/${esc(b.whatsapp.replace(/\D/g, ''))}" target="_blank" rel="noopener">WhatsApp: ${esc(b.whatsapp)}</a>`);
+        [['facebook', 'Facebook'], ['tiktok', 'TikTok'], ['youtube', 'YouTube']].forEach(([k, label]) => {
+          if (b[k]) links.push(`<a href="${esc(b[k])}" target="_blank" rel="noopener">${label}</a>`);
+        });
+        if (b.mapUrl) links.push(`<a href="${esc(b.mapUrl)}" target="_blank" rel="noopener">Как нас найти</a>`);
+        if (b.workHours) links.push(`<a>${esc(b.workHours)}</a>`);
+        return links.join('');
+      })()}`;
     $('#year').textContent = new Date().getFullYear();
     $('#curBtn').innerHTML = ['UZS', 'USD'].map((c) => `<b class="${NS.cur === c ? 'is-on' : ''}">${c === 'UZS' ? 'СУМ' : 'USD'}</b>`).join('<i>/</i>');
     $('#curBtn').title = `1 $ = ${NS.money(NS.usdRate(), 'UZS')}`;
@@ -1011,7 +1067,7 @@
     if ((x = el('[data-quick]'))) {
       e.preventDefault();
       const p = NS.product(x.dataset.quick);
-      if (p && addToCart(p.id, p.colors[0], x.dataset.size)) document.dispatchEvent(new CustomEvent('ns:added', { detail: { el: x } }));
+      if (p && addToCart(p.id, NS.colorWithSize(p, x.dataset.size), x.dataset.size)) document.dispatchEvent(new CustomEvent('ns:added', { detail: { el: x } }));
       return;
     }
     if ((x = el('[data-open-cart]'))) { e.preventDefault(); openPanel($('#cartDrawer')); return; }
@@ -1025,7 +1081,7 @@
       const p = line && NS.product(line.id);
       if (!line || !p) return;
       const next = line.qty + +x.dataset.step;
-      if (next > (+p.stock[line.size] || 0)) { toast(`${t('checkout.errStock')}: ${+p.stock[line.size] || 0}`, 'error'); return; }
+      if (next > NS.variantStock(p, line.color, line.size)) { toast(`${t('checkout.errStock')}: ${NS.variantStock(p, line.color, line.size)}`, 'error'); return; }
       if (next < 1) cart = cart.filter((l) => l !== line); else line.qty = next;
       saveCart();
       return;
@@ -1120,9 +1176,9 @@
         return;
       }
       app.innerHTML = '<div class="container"><div class="empty"><h3>' +
-        (I18N.lang === 'uz' ? "Do'kon vaqtincha ishlamayapti" : 'Магазин временно недоѝтупен') +
+        (I18N.lang === 'uz' ? "Do'kon vaqtincha ishlamayapti" : 'Магазин временно недоступен') +
         '</h3><p>' +
-        (I18N.lang === 'uz' ? "Server bilan bog'lanib bo'lmadi. Sahifani yangilang." : 'Не удалоѝь ѝвѝзатьѝѝ ѝ ѝервером. Обновите ѝтраницу.') +
+        (I18N.lang === 'uz' ? "Server bilan bog'lanib bo'lmadi. Sahifani yangilang." : 'Не удалось связаться с сервером. Обновите страницу.') +
         '</p></div></div>';
     });
   }

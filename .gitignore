@@ -19,3 +19,10 @@ docs/admin-report/_lesson/
 Thumbs.db
 .idea/
 .vscode/
+# локальная база и резервные копии с данными покупателей — никогда не коммитить
+backups/
+data/local.sqlite*
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.vercel

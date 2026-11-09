@@ -5,9 +5,15 @@
   "description": "Nargizka Shop — интернет-магазин женских платьев с админ-панелью",
   "scripts": {
     "start": "node server.js",
-    "vercel-build": "node scripts/vercel-copy-static.js"
+    "vercel-build": "node scripts/vercel-copy-static.js",
+    "migrate:check": "node scripts/migrate-to-turso.js",
+    "migrate:apply": "node scripts/migrate-to-turso.js --apply",
+    "migrate:verify": "node scripts/migrate-to-turso.js --verify",
+    "test": "node scripts/test/e2e-release.js && node scripts/test/e2e.js",
+    "db:export": "node scripts/db-export.js",
+    "migrate:clean": "node scripts/migrate-to-turso.js --clean"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   }
 }
