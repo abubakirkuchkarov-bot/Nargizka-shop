@@ -439,7 +439,9 @@ async function importSnapshot(c, source, opts) {
     }
     const now = Date.now();
     const st = [];
-    st.push({ sql: `INSERT INTO backups(created_at, reason, sha256, data) VALUES (?,?,?,?)`, args: [now, 'source-before-migration' + (o.sourceName ? ': ' + o.sourceName : ''), sha256(raw), raw] });
+    // резервная копия — исходный файл байт в байт, даже если перед переносом настройки были поправлены
+    const original = typeof o.originalRaw === 'string' ? o.originalRaw : raw;
+    st.push({ sql: `INSERT INTO backups(created_at, reason, sha256, data) VALUES (?,?,?,?)`, args: [now, 'source-before-migration' + (o.sourceName ? ': ' + o.sourceName : ''), sha256(original), original] });
     if (o.archiveAll) {
       Object.keys(o.archiveAll).forEach((kind) => {
         st.push({ sql: `INSERT INTO quarantine(kind, row_id, data, reason, created_at) VALUES (?, NULL, ?, ?, ?)`, args: ['all-' + kind, JSON.stringify(o.archiveAll[kind]), 'чистый запуск: архив исходных данных', now] });
@@ -482,7 +484,7 @@ async function importSnapshot(c, source, opts) {
     kvPut('settings', JSON.stringify(snapshot.settings || {}));
     kvPut('finance_opening', JSON.stringify(Math.round(+fin.openingBalance || 0)));
     st.push({ sql: `INSERT INTO meta(key, value) VALUES ('initialized_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, args: [String(now)] });
-    st.push({ sql: `INSERT INTO meta(key, value) VALUES ('source_sha256', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, args: [sha256(raw)] });
+    st.push({ sql: `INSERT INTO meta(key, value) VALUES ('source_sha256', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, args: [sha256(typeof o.originalRaw === 'string' ? o.originalRaw : raw)] });
     st.push({ sql: `UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'rev'`, args: [] });
     // пакетами, чтобы не упереться в размер одного HTTP-запроса
     for (let i = 0; i < st.length; i += 200) await tx.run(st.slice(i, i + 200));

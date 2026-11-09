@@ -76,7 +76,7 @@ function main() {
   const bdir = path.join(ROOT, 'backups');
   fs.mkdirSync(bdir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const bfile = path.join(bdir, 'db-before-turso-' + stamp + '.json');
+  const bfile = path.join(bdir, 'db-before-turso-' + stamp + '-' + sha.slice(0, 8) + '.json');
   fs.writeFileSync(bfile, raw);
   console.log('\nРезервная копия:', path.relative(ROOT, bfile), '\nSHA-256:', sha);
 
@@ -155,7 +155,7 @@ async function run() {
       if (src.settings && src.settings.hero && /Более\s+\d+\s+моделей/i.test(src.settings.hero.subtitle || '')) {
         src.settings.hero.subtitle = 'Платья от коктейльных до свадебных. Сшито для женщин, которые выбирают лучшее.';
       }
-      await Store.importSnapshot(c, JSON.stringify(src), { clean: true, sourceName: path.basename(SOURCE) + ' sha256:' + plan.sha.slice(0, 12) + ' (чистый запуск)' });
+      await Store.importSnapshot(c, JSON.stringify(src), { clean: true, originalRaw: plan.raw, sourceName: path.basename(SOURCE) + ' sha256:' + plan.sha.slice(0, 12) + ' (чистый запуск)' });
       console.log('Готово.');
     } else
     await Store.importSnapshot(c, flag('--restore-test-stock') ? JSON.stringify(source) : plan.raw, {
